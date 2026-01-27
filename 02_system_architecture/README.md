@@ -238,22 +238,72 @@ src/
 
 ---
 
-## 8. 확장 계획
+## 8. 검색 엔진
 
-### 8.1 Demo → Production
+### 8.1 현재: BM25 키워드 검색 (무료)
+
+```
+[사용자 아이디어]
+     ↓
+[HyDE] 가상 청구항 생성 (GPT-4o-mini)
+     ↓
+[BM25] 키워드 매칭 기반 검색 (rank_bm25)
+     ↓
+[Top-5 특허 반환]
+```
+
+**장점:**
+- ✅ API 비용 없음 (로컬 처리)
+- ✅ 빠른 검색 속도
+- ✅ 데모/프로토타입에 적합
+
+**단점:**
+- ⚠️ 동의어/의미 유사성 인식 불가
+- ⚠️ 70-80% 검색 품질
+
+### 8.2 향후: 벡터 임베딩 검색 (권장)
+
+| 단계 | 작업 | 비용 |
+|------|------|------|
+| 1 | 10K 특허 임베딩 생성 | ~$0.20 (1회) |
+| 2 | 임베딩 저장 (`.npy` 파일) | - |
+| 3 | 쿼리 시 코사인 유사도 계산 | ~$0.002/쿼리 |
+
+```python
+# 향후 업그레이드 코드 예시
+from scipy.spatial.distance import cosine
+
+# 1회 전처리
+embeddings = np.load("patent_embeddings.npy")
+
+# 검색
+query_emb = openai.embed(hypothetical_claim)
+similarities = [1 - cosine(query_emb, p_emb) for p_emb in embeddings]
+top_5 = sorted(range(len(similarities)), key=lambda i: similarities[i], reverse=True)[:5]
+```
+
+**품질 향상:**
+- BM25: 70-80% → **임베딩: 90-95%**
+
+---
+
+## 9. 확장 계획
+
+### 9.1 Demo → Production
 
 | 현재 (Demo) | 향후 (Production) |
 |-------------|-------------------|
+| BM25 키워드 검색 | **벡터 임베딩 검색** |
 | 10K 특허 | On-demand BigQuery 검색 |
-| Mock Vector Search | Milvus Vector DB |
 | JSON 저장 | Database (PostgreSQL) |
-| CLI | Web UI (Streamlit/FastAPI) |
+| Streamlit | FastAPI + React |
 
-### 8.2 추가 기능
+### 9.2 추가 기능
 
-- [ ] 웹 UI (Streamlit)
+- [x] 웹 UI (Streamlit) ✅
+- [ ] 벡터 임베딩 검색 업그레이드
 - [ ] 실시간 BigQuery 검색
-- [ ] 분석 결과 히스토리
+- [ ] 분석 결과 히스토리 DB
 - [ ] 다국어 지원 (한/영/중/일)
 
 ---

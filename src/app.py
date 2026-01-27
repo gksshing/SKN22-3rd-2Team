@@ -198,15 +198,14 @@ async def run_analysis(user_idea: str, status_container) -> dict:
     
     with status_container.status("🔍 특허 분석 중...", expanded=True) as status:
         # Step 1: HyDE
-        status.write("📝 **Step 1/4**: HyDE - 가상 청구항 생성 중...")
+        status.write("📝 **Step 1/3**: HyDE - 가상 청구항 생성 중...")
         hypothetical_claim = await agent.generate_hypothetical_claim(user_idea)
         status.write(f"✅ 가상 청구항 생성 완료")
         status.write(f"```\n{hypothetical_claim[:200]}...\n```")
         
-        # Step 2: Embedding & Search
-        status.write("🔎 **Step 2/4**: 벡터 검색 중...")
-        query_embedding = await agent.embed_text(hypothetical_claim)
-        search_results = await agent.vector_db.search(query_embedding, top_k=5)
+        # Step 2: BM25 Search (no embedding cost!)
+        status.write("🔎 **Step 2/3**: BM25 키워드 검색 중...")
+        search_results = await agent.search_client.search(hypothetical_claim, top_k=5)
         status.write(f"✅ {len(search_results)}개 유사 특허 발견")
         
         # Step 3: Grading
@@ -298,12 +297,12 @@ with st.sidebar:
     # API Usage Guide
     st.markdown("### 💰 API 비용 가이드")
     st.caption("""
-    **분석 1회 예상 비용**: ~$0.02-0.05
+    **분석 1회 예상 비용**: ~$0.01-0.03
     
     - HyDE: gpt-4o-mini
+    - Search: BM25 (무료!)
     - Grading: gpt-4o-mini
     - Analysis: gpt-4o
-    - Embedding: text-embedding-3-small
     """)
     
     st.divider()

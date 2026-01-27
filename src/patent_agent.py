@@ -139,14 +139,19 @@ class PatentSearchResult:
 # Mock Milvus Client (For Demo without Milvus)
 # =============================================================================
 
-class MockMilvusClient:
+class BM25SearchClient:
     """
-    Mock Milvus client for demo purposes.
-    In production, replace with actual pymilvus connection.
+    BM25-based patent search client.
+    Uses keyword matching for efficient search without embedding costs.
+    
+    Note: For production, upgrade to vector embedding search for better semantic matching.
+    See: 02_system_architecture/README.md for upgrade plan.
     """
     
     def __init__(self, data_path: str = None):
         self.patents = []
+        self.bm25 = None
+        self.corpus = []
         
         # Use absolute path based on this file's location
         if data_path is None:
@@ -154,6 +159,7 @@ class MockMilvusClient:
             data_path = Path(__file__).resolve().parent / "data" / "processed"
         
         self._load_patents(str(data_path))
+        self._build_bm25_index()
     
     def _load_patents(self, data_path: str) -> None:
         """Load patents from processed JSON."""
@@ -181,26 +187,82 @@ class MockMilvusClient:
         else:
             logger.warning(f"No patent files found in {data_path}")
     
+    def _build_bm25_index(self) -> None:
+        """Build BM25 index from patent texts."""
+        if not self.patents:
+            logger.warning("No patents to index")
+            return
+        
+        try:
+            from rank_bm25 import BM25Okapi
+        except ImportError:
+            logger.warning("rank_bm25 not installed. Run: pip install rank_bm25")
+            return
+        
+        # Build corpus from title + abstract + claims
+        self.corpus = []
+        for patent in self.patents:
+            text_parts = []
+            
+            # Title
+            title = patent.get("title", "")
+            if title:
+                text_parts.append(title)
+            
+            # Abstract
+            abstract = patent.get("abstract", "")
+            if abstract:
+                text_parts.append(abstract)
+            
+            # Claims (first claim)
+            claims = patent.get("claims", [])
+            if claims and isinstance(claims[0], dict):
+                claim_text = claims[0].get("claim_text", "")
+                if claim_text:
+                    text_parts.append(claim_text[:500])  # Limit claim length
+            
+            combined_text = " ".join(text_parts).lower()
+            # Simple tokenization
+            tokens = combined_text.split()
+            self.corpus.append(tokens)
+        
+        # Build BM25 index
+        self.bm25 = BM25Okapi(self.corpus)
+        logger.info(f"Built BM25 index for {len(self.corpus)} patents")
+    
     async def search(
         self,
-        query_embedding: List[float],
+        query: str,
         top_k: int = 5,
     ) -> List[PatentSearchResult]:
         """
-        Mock vector search using cosine similarity.
-        In production, this calls Milvus.
-        """
-        import random
+        BM25-based patent search.
         
-        # For demo: return random patents
-        if not self.patents:
+        Args:
+            query: Search query text (user idea or hypothetical claim)
+            top_k: Number of results to return
+            
+        Returns:
+            List of PatentSearchResult sorted by BM25 score
+        """
+        if not self.patents or self.bm25 is None:
+            logger.warning("BM25 index not available")
             return []
         
-        sample_size = min(top_k, len(self.patents))
-        sampled = random.sample(self.patents, sample_size)
+        # Tokenize query
+        query_tokens = query.lower().split()
+        
+        # Get BM25 scores
+        scores = self.bm25.get_scores(query_tokens)
+        
+        # Get top-k indices
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
         
         results = []
-        for i, patent in enumerate(sampled):
+        for rank, idx in enumerate(top_indices):
+            patent = self.patents[idx]
+            score = scores[idx]
+            
             # Get text content
             abstract = patent.get("abstract", "")
             claims_list = patent.get("claims", [])
@@ -209,14 +271,15 @@ class MockMilvusClient:
                 claims_text = claims_list[0].get("claim_text", "")
             
             results.append(PatentSearchResult(
-                publication_number=patent.get("publication_number", f"UNKNOWN-{i}"),
+                publication_number=patent.get("publication_number", f"UNKNOWN-{idx}"),
                 title=patent.get("title", ""),
                 abstract=abstract[:500] if abstract else "",
                 claims=claims_text[:1000] if claims_text else "",
                 ipc_codes=patent.get("ipc_codes", []),
-                similarity_score=0.8 - (i * 0.1),  # Mock scores
+                similarity_score=float(score),  # BM25 score
             ))
         
+        logger.info(f"BM25 search found {len(results)} results (top score: {scores[top_indices[0]]:.2f})")
         return results
 
 
@@ -239,7 +302,7 @@ class PatentAgent:
             raise ValueError("OPENAI_API_KEY not set. Check .env file.")
         
         self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-        self.vector_db = MockMilvusClient()
+        self.search_client = BM25SearchClient()  # BM25-based search
     
     # =========================================================================
     # 1. HyDE - Hypothetical Document Embedding
@@ -293,11 +356,10 @@ class PatentAgent:
         top_k: int = TOP_K_RESULTS,
     ) -> Tuple[str, List[PatentSearchResult]]:
         """
-        HyDE-enhanced patent search.
+        HyDE-enhanced patent search using BM25.
         
         1. Generate hypothetical claim from user idea
-        2. Embed the hypothetical claim
-        3. Search vector DB for similar patents
+        2. Search using BM25 with hypothetical claim as query
         
         Returns:
             Tuple of (hypothetical_claim, search_results)
@@ -305,11 +367,8 @@ class PatentAgent:
         # Generate hypothetical claim
         hypothetical_claim = await self.generate_hypothetical_claim(user_idea)
         
-        # Embed the claim
-        query_embedding = await self.embed_text(hypothetical_claim)
-        
-        # Search vector DB
-        results = await self.vector_db.search(query_embedding, top_k=top_k)
+        # Search using BM25 (text-based, no embedding cost)
+        results = await self.search_client.search(hypothetical_claim, top_k=top_k)
         
         return hypothetical_claim, results
     
