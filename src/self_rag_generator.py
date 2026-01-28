@@ -25,7 +25,7 @@ import re
 
 from tqdm import tqdm
 
-from config import config, SelfRAGConfig, PROCESSED_DATA_DIR
+from src.config import config, SelfRAGConfig, PROCESSED_DATA_DIR
 
 
 # =============================================================================

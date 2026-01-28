@@ -195,7 +195,7 @@ class PatentAgent:
             self.db_client = db_client
         else:
             # Use PineconeClient for v3.0 Migration
-            from vector_db import PineconeClient
+            from src.vector_db import PineconeClient
             self.db_client = PineconeClient()
             self._try_load_local_cache()
     
@@ -224,7 +224,7 @@ class PatentAgent:
         Extract keywords from text for BM25 search.
         Uses both rule-based extraction and optional LLM enhancement.
         """
-        from vector_db import KeywordExtractor
+        from src.vector_db import KeywordExtractor
         
         # Rule-based extraction
         keywords = KeywordExtractor.extract(text, max_keywords=15)
@@ -360,14 +360,19 @@ class PatentAgent:
             for i, r in enumerate(results)
         ])
         
-        system_prompt = """당신은 선행 기술 조사를 수행하는 특허 심사관입니다.
+        system_prompt = """당신은 선행 기술 조사를 수행하는 고도로 숙련된 특허 심사관입니다.
 검색된 특허가 사용자의 아이디어와 기술적으로 실질적인 관련이 있는지 평가하십시오.
 
-평가 기준 (0.0 ~ 1.0 점):
-1. 기술 분야 일치성
-2. 해결 수단 유사성
-3. 침해 분석 가치
+평가 지침:
+1. **기술적 실현 가능성 및 논리**: 아이디어가 논리적으로 성립하지 않거나(예: 전혀 다른 성질의 기술이 물리적/생물학적으로 결합 불가한 경우), 단순한 키워드 짜집기인 경우 낮은 점수를 부여하십시오.
+2. **기술 분야 및 목적**: 아이디어의 '진정한 기술적 과제'와 특허의 '해결하려는 과제'가 일치하는지 우선순위를 두십시오.
+3. **평가 기준 (0.0 ~ 1.0 점)**:
+   - 0.8~1.0: 기술적 수단과 목적이 거의 동일함 (직접적 침해 리스크)
+   - 0.5~0.7: 기술 분야는 같으나 세부 구현 방식이 다름 (개량 또는 회피 가능성)
+   - 0.1~0.4: 키워드만 겹치거나 기술적 맥락이 상이함 (단순 참고 수준)
+   - 0.0: 기술적으로 무관함
 
+평가 시 '오이맛 소고기'와 같이 키워드(육종, 소고기, 오이)는 존재하나 기술적 실체가 불분명하거나 논리적 비약이 있는 경우, 유사도가 높게 측정되지 않도록 엄격하게 심사하십시오.
 반드시 JSON 형식으로 응답하십시오."""
 
         user_prompt = f"""[사용자 아이디어]

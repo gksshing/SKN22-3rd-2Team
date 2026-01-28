@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta
 import streamlit as st
 import extra_streamlit_components as stx
-from history_manager import HistoryManager
+from src.history_manager import HistoryManager
 
 def get_manager():
     return stx.CookieManager()

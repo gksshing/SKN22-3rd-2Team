@@ -20,7 +20,7 @@ import numpy as np
 from tqdm import tqdm
 from openai import AsyncOpenAI
 
-from config import config, EmbeddingConfig
+from src.config import config, EmbeddingConfig
 
 
 # =============================================================================

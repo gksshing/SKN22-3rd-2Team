@@ -5,7 +5,7 @@ import time
 import asyncio
 import streamlit as st
 from datetime import datetime
-from patent_agent import PatentAgent, PatentSearchResult
+from src.patent_agent import PatentAgent, PatentSearchResult
 
 async def run_analysis_streaming(agent, user_idea: str, results, output_container):
     """Run streaming analysis and display in real-time."""

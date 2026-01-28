@@ -36,7 +36,7 @@ except ImportError:
 
 import numpy as np
 
-from config import (
+from src.config import (
     config,
     print_config_summary,
     update_config_from_env,
@@ -86,7 +86,7 @@ async def stage_1_extraction(
     Returns:
         Path to extracted data file, or None if dry run
     """
-    from bigquery_extractor import BigQueryExtractor
+    from src.bigquery_extractor import BigQueryExtractor
     
     print("\n" + "=" * 70)
     print("📥 Stage 1: BigQuery Data Extraction")
@@ -119,7 +119,7 @@ async def stage_2_preprocessing(
     Returns:
         Path to processed data file
     """
-    from preprocessor import PatentPreprocessor
+    from src.preprocessor import PatentPreprocessor
     
     print("\n" + "=" * 70)
     print("🔧 Stage 2: Patent Preprocessing")
@@ -157,7 +157,7 @@ async def stage_3_triplet_generation(
     Returns:
         Path to triplets file
     """
-    from triplet_generator import PAINETTripletGenerator
+    from src.triplet_generator import PAINETTripletGenerator
     
     print("\n" + "=" * 70)
     print("🔗 Stage 3: PAI-NET Triplet Generation")
@@ -192,7 +192,7 @@ async def stage_4_embedding(
     Returns:
         Path to embeddings file
     """
-    from embedder import OpenAIEmbedder
+    from src.embedder import OpenAIEmbedder
     
     print("\n" + "=" * 70)
     print("🧠 Stage 4: Embedding Generation (OpenAI API)")
@@ -250,7 +250,7 @@ async def stage_5_vector_indexing(
     Returns:
         True if successful
     """
-    from vector_db import PineconeClient
+    from src.vector_db import PineconeClient
     
     print("\n" + "=" * 70)
     print("🗄️  Stage 5: Pinecone Vector Indexing (Serverless)")
@@ -345,7 +345,7 @@ async def stage_6_selfrag_generation(
     Returns:
         Path to training data file
     """
-    from self_rag_generator import SelfRAGDataGenerator
+    from src.self_rag_generator import SelfRAGDataGenerator
     
     print("\n" + "=" * 70)
     print("📝 Stage 6: Self-RAG Training Data Generation")

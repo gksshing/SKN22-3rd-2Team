@@ -40,7 +40,7 @@ render_header()
 @st.cache_resource
 def load_db_client():
     """Load Pinecone + BM25 hybrid client."""
-    from vector_db import PineconeClient
+    from src.vector_db import PineconeClient
     try:
         client = PineconeClient()
         db_stats = client.get_stats()

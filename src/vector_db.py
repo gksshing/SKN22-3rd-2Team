@@ -45,7 +45,7 @@ try:
 except ImportError:
     PINECONE_AVAILABLE = False
 
-from config import config, FaissConfig, PineconeConfig, EMBEDDINGS_DIR, INDEX_DIR
+from src.config import config, FaissConfig, PineconeConfig, EMBEDDINGS_DIR, INDEX_DIR
 
 
 # =============================================================================

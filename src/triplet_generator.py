@@ -25,7 +25,7 @@ from datetime import datetime
 
 from tqdm import tqdm
 
-from config import config, PAINETConfig, TRIPLETS_DIR
+from src.config import config, PAINETConfig, TRIPLETS_DIR
 
 # =============================================================================
 # Logging Setup
@@ -455,7 +455,7 @@ class PAINETTripletGenerator:
 async def main():
     """Main entry point for standalone execution."""
     import sys
-    from config import PROCESSED_DATA_DIR
+    from src.config import PROCESSED_DATA_DIR
     
     logging.basicConfig(
         level=logging.INFO,

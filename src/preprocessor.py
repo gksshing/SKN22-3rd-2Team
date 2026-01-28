@@ -26,7 +26,7 @@ from datetime import datetime
 
 from tqdm import tqdm
 
-from config import config, DomainConfig, PROCESSED_DATA_DIR
+from src.config import config, DomainConfig, PROCESSED_DATA_DIR
 
 # =============================================================================
 # Logging Setup

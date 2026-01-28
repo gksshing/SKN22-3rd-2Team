@@ -8,13 +8,13 @@ from src.ui.styles import apply_theme_css
 
 def render_header():
     """Render the application header."""
-    st.markdown(\"""
+    st.markdown("""
     <div class="main-header">
         <h1>⚡ 쇼특허 (Short-Cut) v3.0</h1>
         <p style="font-size: 1.2rem; color: #888;">AI 기반 특허 선행 기술 조사 시스템</p>
         <p style="font-size: 0.9rem; color: #666;">Self-RAG | Hybrid Search | LLM Streaming</p>
     </div>
-    \""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
 
 
 def render_sidebar(openai_api_key, db_client, db_stats):
@@ -104,14 +104,14 @@ def render_sidebar(openai_api_key, db_client, db_stats):
         
         # API Usage Guide
         st.markdown("### 💰 API 비용 가이드")
-        st.caption(\"""
+        st.caption("""
         **분석 1회 예상 비용**: ~$0.01-0.03
         
         - HyDE: gpt-4o-mini
         - Embed: text-embedding-3-small
         - Grading: gpt-4o-mini
         - Analysis: gpt-4o (Streaming)
-        \""")
+        """)
         
         st.divider()
         
