@@ -1,5 +1,5 @@
 """
-Patent Guard v2.0 - Patent Data Preprocessor
+Short-Cut v3.0 - Patent Data Preprocessor
 =============================================
 Processes raw patent data with hierarchical chunking and claim parsing.
 
@@ -9,7 +9,7 @@ Features:
 - RAG component keyword tagging
 - Async batch processing
 
-Author: Patent Guard Team
+Author: Team 뀨💕
 License: MIT
 """
 
@@ -931,7 +931,7 @@ async def main():
     )
     
     print("\n" + "=" * 70)
-    print("🛡️  Patent Guard v2.0 - Patent Preprocessor")
+    print("⚡ 쇼특허 (Short-Cut) v3.0 - Patent Preprocessor")
     print("=" * 70)
     
     # Check for input file argument

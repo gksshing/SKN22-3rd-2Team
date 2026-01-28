@@ -1,5 +1,5 @@
 """
-Patent Guard v3.0 - FAISS + BM25 Hybrid Vector Database
+Short-Cut v3.0 - FAISS + BM25 Hybrid Vector Database
 ========================================================
 In-memory vector database with Hybrid Search (RRF Fusion).
 
@@ -9,7 +9,7 @@ Features:
 - RRF (Reciprocal Rank Fusion) for result merging
 - Zero-latency startup with pre-computed index
 
-Author: Patent Guard Team
+Author: Team 뀨💕
 License: MIT
 """
 
@@ -39,7 +39,13 @@ try:
 except ImportError:
     BM25_AVAILABLE = False
 
-from config import config, FaissConfig, EMBEDDINGS_DIR, INDEX_DIR
+try:
+    from pinecone import Pinecone, ServerlessSpec
+    PINECONE_AVAILABLE = True
+except ImportError:
+    PINECONE_AVAILABLE = False
+
+from config import config, FaissConfig, PineconeConfig, EMBEDDINGS_DIR, INDEX_DIR
 
 
 # =============================================================================
@@ -538,6 +544,330 @@ class FaissClient:
 
 
 # =============================================================================
+# Pinecone Client with Hybrid Search
+# =============================================================================
+
+class PineconeClient:
+    """
+    Pinecone-based vector database (Serverless) with Hybrid Search.
+    
+    Features:
+    - Dense search using Pinecone (Serverless)
+    - Sparse search using local BM25
+    - RRF Fusion for result merging
+    - Batch upsert logic
+    """
+    
+    def __init__(
+        self,
+        pinecone_config: PineconeConfig = None,
+        embedding_dim: int = None,
+    ):
+        if not PINECONE_AVAILABLE:
+            raise ImportError("pinecone is required. Install with: pip install pinecone>=3.0.0")
+        
+        self.config = pinecone_config or config.pinecone
+        self.embedding_dim = embedding_dim or config.embedding.embedding_dim
+        
+        # Initialize Pinecone
+        if not self.config.api_key:
+            raise ValueError("PINECONE_API_KEY not set")
+            
+        self.pc = Pinecone(api_key=self.config.api_key)
+        
+        # Check/Create Index
+        self._ensure_index_exists()
+        
+        self.index = self.pc.Index(self.config.index_name)
+        
+        # Setup Local BM25
+        self.bm25_engine = BM25SearchEngine()
+        # We reuse FAISS metadata path for consistency or define a new one?
+        # Let's use a specific path to avoid conflict/overwrite of FAISS data if running side-by-side
+        self.metadata_path = INDEX_DIR / "pinecone_metadata.pkl"
+        self.bm25_path = INDEX_DIR / "pinecone_bm25.pkl"
+        
+        self.metadata: Dict[str, Dict[str, Any]] = {}
+        self._loaded = False
+        
+        logger.info(f"Pinecone Client initialized (index={self.config.index_name})")
+
+    def _ensure_index_exists(self):
+        """Check if index exists, create if not (Serverless)."""
+        existing_indexes = [i.name for i in self.pc.list_indexes()]
+        
+        if self.config.index_name not in existing_indexes:
+            logger.info(f"Creating Pinecone index '{self.config.index_name}'...")
+            try:
+                self.pc.create_index(
+                    name=self.config.index_name,
+                    dimension=self.config.dimension,
+                    metric=self.config.metric,
+                    spec=ServerlessSpec(
+                        cloud=self.config.cloud,
+                        region=self.config.region
+                    )
+                )
+                logger.info(f"Index '{self.config.index_name}' created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create Pinecone index: {e}")
+                raise
+
+    def add_vectors(
+        self,
+        embeddings: np.ndarray,
+        metadata_list: List[Dict[str, Any]],
+        normalize: bool = False,  # Pinecone cosine metric usually handles normalized vectors better, but check metric
+    ) -> int:
+        """
+        Batch add vectors to Pinecone and update local BM25.
+        """
+        if normalize and self.config.metric == 'cosine':
+             # Normalize embeddings to unit length for cosine similarity
+             # (Though Pinecone 'cosine' does normalization automatically, it's safe to do valid L2 norm)
+             pass 
+             # Only strictly needed if metric is dotproduct acting as cosine
+        
+        total = len(embeddings)
+        batch_size = self.config.batch_size
+        
+        logger.info(f"Upserting {total} vectors to Pinecone (batch_size={batch_size})...")
+        
+        # Prepare for BM25
+        # We can update self.metadata incrementally or rebuild. 
+        # Here we assume batch/initial load pattern.
+        
+        upsert_count = 0
+        
+        # Use tqdm for progress visibility
+        from tqdm import tqdm
+        for i in tqdm(range(0, total, batch_size), desc="Upserting to Pinecone", unit="batch"):
+            batch_vectors = embeddings[i : i + batch_size]
+            batch_meta = metadata_list[i : i + batch_size]
+            
+            vectors_to_upsert = []
+            for j, (vec, meta) in enumerate(zip(batch_vectors, batch_meta)):
+                # chunk_id should be unique. 
+                chunk_id = meta.get("chunk_id", f"chk_{i+j}")
+                
+                # Update local metadata
+                self.metadata[chunk_id] = meta
+                
+                # Prepare Pinecone vector
+                # Flatten metadata for Pinecone (limitations on nested dicts?)
+                # Pinecone supports basic types. Ensure robust types.
+                
+                # Metadata size limit check (40KB per vector)
+                content_text = meta.get("content", "")
+                # Safe truncate to ~30KB to allow room for other fields
+                if len(content_text.encode('utf-8')) > 30000:
+                    # Simple truncation by character may not match byte size perfectly but good enough approximation
+                    # 10000 chars is usually safe even with multi-byte chars
+                    content_text = content_text[:10000]
+
+                flat_meta = {
+                    "text": content_text,
+                    "title": (meta.get("title", "") or "")[:1000],  # Truncate title
+                    "patent_id": meta.get("patent_id", ""),
+                    "ipc_code": (meta.get("ipc_codes") or [""])[0] if isinstance(meta.get("ipc_codes"), list) else str(meta.get("ipc_codes", "")),
+                    # Add other fields as needed, keep it lightweight
+                }
+                
+                vectors_to_upsert.append({
+                    "id": chunk_id,
+                    "values": vec.tolist(),
+                    "metadata": flat_meta
+                })
+            
+            # Upsert batch
+            try:
+                self.index.upsert(vectors=vectors_to_upsert, namespace=self.config.namespace)
+                upsert_count += len(vectors_to_upsert)
+            except Exception as e:
+                logger.error(f"Pinecone upsert failed at batch {i}: {e}")
+                # Continue or raise? Usually raise to ensure integrity
+                raise e
+        
+        logger.info(f"Upserted {upsert_count} vectors to Pinecone")
+        
+        # Build/Update BM25
+        # Note: If we are adding incrementally, rebuilding BM25 every time is slow.
+        # But assuming build_index_from_patents uses this once.
+        docs = list(self.metadata.values())
+        self.bm25_engine.build_index(docs, text_key="content", id_key="chunk_id")
+        
+        return upsert_count
+
+    def search(
+        self,
+        query_embedding: np.ndarray,
+        top_k: int = 10,
+        normalize: bool = False, # Handled by Pinecone usually
+    ) -> List[SearchResult]:
+        """
+        Dense search using Pinecone.
+        """
+        if query_embedding.ndim > 1:
+            query_embedding = query_embedding[0] # Take first if batch
+            
+        try:
+            response = self.index.query(
+                vector=query_embedding.tolist(),
+                top_k=top_k,
+                include_metadata=True,
+                namespace=self.config.namespace
+            )
+        except Exception as e:
+            logger.error(f"Pinecone search failed: {e}")
+            return []
+            
+        results = []
+        for match in response['matches']:
+            meta = match['metadata'] if match.get('metadata') else {}
+            chunk_id = match['id']
+            score = match['score']
+            
+            # Local metadata might have more details (claims, etc)
+            local_meta = self.metadata.get(chunk_id, {})
+            
+            # Prefer local metadata for full context if avail, else fallback to Pinecone meta
+            content = local_meta.get("content") or meta.get("text", "")
+            patent_id = local_meta.get("patent_id") or meta.get("patent_id", "")
+            
+            results.append(SearchResult(
+                chunk_id=chunk_id,
+                patent_id=patent_id,
+                score=score,
+                content=content,
+                content_type=local_meta.get("content_type", "unknown"),
+                dense_score=score,
+                metadata=local_meta or meta
+            ))
+            
+        return results
+
+    def hybrid_search(
+        self,
+        query_embedding: np.ndarray,
+        query_text: str,
+        top_k: int = 10,
+        dense_weight: float = 0.5,
+        sparse_weight: float = 0.5,
+        rrf_k: int = 60,
+        normalize: bool = True,
+    ) -> List[SearchResult]:
+        """
+        Hybrid search (Pinecone Dense + Local BM25) with RRF.
+        Identical logic to FaissClient.hybrid_search.
+        """
+        # Dense search (Pinecone)
+        dense_results = self.search(query_embedding, top_k=top_k * 2)
+        
+        # Sparse search (Local BM25)
+        sparse_raw = self.bm25_engine.search(query_text, top_k=top_k * 2)
+        
+        # RRF Fusion
+        rrf_scores: Dict[str, float] = defaultdict(float)
+        chunk_data: Dict[str, SearchResult] = {}
+        
+        # Process dense results
+        for rank, result in enumerate(dense_results):
+            rrf_scores[result.chunk_id] += dense_weight / (rrf_k + rank + 1)
+            result.dense_score = result.score
+            chunk_data[result.chunk_id] = result
+        
+        # Process sparse results
+        for rank, (chunk_id, score, meta) in enumerate(sparse_raw):
+            rrf_scores[chunk_id] += sparse_weight / (rrf_k + rank + 1)
+            
+            if chunk_id not in chunk_data:
+                # Create SearchResult from BM25 result
+                chunk_data[chunk_id] = SearchResult(
+                    chunk_id=chunk_id,
+                    patent_id=meta.get("patent_id", ""),
+                    score=0.0,
+                    content=meta.get("content", ""),
+                    content_type=meta.get("content_type", ""),
+                    sparse_score=score,
+                    metadata={
+                        "ipc_code": meta.get("ipc_code", ""),
+                        "importance_score": meta.get("importance_score", 0.0),
+                        "title": meta.get("title", ""),
+                        "abstract": meta.get("abstract", ""),
+                        "claims": meta.get("claims", ""),
+                    },
+                )
+            else:
+                chunk_data[chunk_id].sparse_score = score
+        
+        # Sort by RRF score
+        sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        final_results = []
+        for chunk_id, rrf_score in sorted_ids[:top_k]:
+            if chunk_id in chunk_data:
+                result = chunk_data[chunk_id]
+                result.rrf_score = rrf_score
+                result.score = rrf_score
+                final_results.append(result)
+        
+        logger.info(f"Pinecone Hybrid: {len(dense_results)} dense + {len(sparse_raw)} sparse -> {len(final_results)} fused")
+        
+        return final_results
+
+    async def async_search(self, *args, **kwargs):
+        """Async wrapper."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.search(*args, **kwargs))
+
+    async def async_hybrid_search(self, *args, **kwargs):
+        """Async wrapper."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self.hybrid_search(*args, **kwargs))
+
+    def save_local(self) -> None:
+        """Save local metadata and BM25 index."""
+        self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(self.metadata_path, 'wb') as f:
+            pickle.dump(self.metadata, f)
+        logger.info(f"Saved Pinecone metadata cache to {self.metadata_path}")
+        
+        self.bm25_engine.save_local(self.bm25_path)
+
+    def load_local(self) -> bool:
+        """Load local metadata and BM25 index."""
+        if not self.metadata_path.exists():
+            return False
+            
+        try:
+            with open(self.metadata_path, 'rb') as f:
+                self.metadata = pickle.load(f)
+            logger.info(f"Loaded Pinecone metadata cache ({len(self.metadata)} items)")
+            
+            if self.bm25_path.exists():
+                self.bm25_engine.load_local(self.bm25_path)
+            
+            self._loaded = True
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load Pinecone local cache: {e}")
+            return False
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get index stats."""
+        try:
+            stats = self.index.describe_index_stats()
+            return {
+                "type": "pinecone", 
+                "total_vectors": stats.get('total_vector_count', 0),
+                "bm25_docs": len(self.bm25_engine.corpus)
+            }
+        except:
+            return {"type": "pinecone", "error": "stats_failed"}
+
+
+# =============================================================================
 # Keyword Extractor
 # =============================================================================
 
@@ -712,7 +1042,7 @@ async def main():
     )
     
     print("\n" + "=" * 70)
-    print("🛡️  Patent Guard v3.0 - Hybrid Search Test")
+    print("⚡ 쇼특허 (Short-Cut) v3.0 - Hybrid Search Test")
     print("=" * 70)
     
     if not FAISS_AVAILABLE:

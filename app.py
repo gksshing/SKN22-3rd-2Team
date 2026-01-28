@@ -125,18 +125,21 @@ st.markdown("""
 # =============================================================================
 
 @st.cache_resource
-def load_faiss_client():
-    """Load FAISS + BM25 hybrid client with pre-computed index."""
-    from vector_db import FaissClient
+def load_db_client():
+    """Load Pinecone + BM25 hybrid client."""
+    from vector_db import PineconeClient
     
-    client = FaissClient()
-    loaded = client.load_local()
+    # PineconeClient automatically connects to serverless index
+    # and loads local BM25 index if available
+    client = PineconeClient()
+    client.load_local()  # Load local BM25 index and metadata cache
     
-    if loaded:
+    try:
         stats = client.get_stats()
-        return client, stats
-    else:
-        return None, {"total_vectors": 0, "initialized": False}
+    except:
+        stats = {"total_vectors": 0, "initialized": False}
+        
+    return client, stats
 
 
 @st.cache_resource
@@ -155,7 +158,7 @@ def get_executor():
 
 
 # Load resources at startup
-FAISS_CLIENT, FAISS_STATS = load_faiss_client()
+DB_CLIENT, DB_STATS = load_db_client()
 OPENAI_API_KEY = get_openai_api_key()
 EXECUTOR = get_executor()
 
@@ -288,8 +291,8 @@ async def run_full_analysis(user_idea: str, status_container, streaming_containe
     """Run the complete patent analysis with streaming."""
     from patent_agent import PatentAgent, CriticalAnalysisResponse
     
-    # Create agent with cached FAISS client
-    agent = PatentAgent(faiss_client=FAISS_CLIENT)
+    # Create agent with cached DB client
+    agent = PatentAgent(db_client=DB_CLIENT)
     
     results = []
     analysis = None
@@ -310,11 +313,11 @@ async def run_full_analysis(user_idea: str, status_container, streaming_containe
         query_text = " ".join(keywords)
         
         if use_hybrid:
-            search_results = await agent.faiss_client.async_hybrid_search(
+            search_results = await agent.db_client.async_hybrid_search(
                 query_embedding, query_text, top_k=5
             )
         else:
-            search_results = await agent.faiss_client.async_search(query_embedding, top_k=5)
+            search_results = await agent.db_client.async_search(query_embedding, top_k=5)
         
         from patent_agent import PatentSearchResult
         results = []
@@ -418,14 +421,14 @@ with st.sidebar:
         st.error("❌ OpenAI API 키 없음")
         st.info("`.env` 파일에 `OPENAI_API_KEY`를 설정하세요.")
     
-    # FAISS Index Status
-    if FAISS_CLIENT and FAISS_STATS.get("total_vectors", 0) > 0:
+    # DB Index Status
+    if DB_CLIENT:
         st.success(f"✅ Hybrid 인덱스 로드됨")
-        st.caption(f"   📊 FAISS: {FAISS_STATS['total_vectors']:,}개 벡터")
-        if FAISS_STATS.get('bm25_initialized'):
-            st.caption(f"   📝 BM25: {FAISS_STATS.get('bm25_docs', 0):,}개 문서")
+        st.caption(f"   🌲 Pinecone: Connected")
+        if DB_STATS.get('bm25_initialized'):
+            st.caption(f"   📝 BM25 (Local): {DB_STATS.get('bm25_docs', 0):,}개 문서")
     else:
-        st.warning("⚠️ 인덱스 없음")
+        st.warning("⚠️ DB 연결 실패")
         st.info("파이프라인을 실행하세요:\n`python src/pipeline.py --stage 5`")
     
     st.divider()
@@ -500,8 +503,7 @@ user_idea = st.text_area(
 can_analyze = (
     user_idea and 
     OPENAI_API_KEY and 
-    FAISS_CLIENT and 
-    FAISS_STATS.get("total_vectors", 0) > 0
+    DB_CLIENT
 )
 
 col1, col2, col3 = st.columns([1, 1, 1])
@@ -516,8 +518,8 @@ with col2:
 if not can_analyze and user_idea:
     if not OPENAI_API_KEY:
         st.warning("⚠️ OpenAI API 키를 설정하세요.")
-    elif not FAISS_CLIENT or FAISS_STATS.get("total_vectors", 0) == 0:
-        st.warning("⚠️ 인덱스를 먼저 생성하세요. `python src/pipeline.py --stage 5`")
+    elif not DB_CLIENT:
+        st.warning("⚠️ DB 클라이언트 초기화 실패.")
 
 # Analysis Execution
 if analyze_button and can_analyze:

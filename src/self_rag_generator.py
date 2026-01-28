@@ -1,5 +1,5 @@
 """
-Patent Guard v2.0 - Self-RAG Training Data Generator
+Short-Cut v3.0 - Self-RAG Training Data Generator
 =====================================================
 Generate training data for Self-RAG with critical patent analysis.
 
@@ -8,7 +8,7 @@ Uses OpenAI GPT to:
 - Generate [유사도 평가], [침해 리스크], [회피 전략] analysis
 - Create ground truth for Self-RAG training
 
-Author: Patent Guard Team
+Author: Team 뀨💕
 License: MIT
 """
 
@@ -545,7 +545,7 @@ async def main():
     )
     
     print("\n" + "=" * 70)
-    print("🛡️  Patent Guard v2.0 - Self-RAG Training Data Generator")
+    print("⚡ 쇼특허 (Short-Cut) v3.0 - Self-RAG Training Data Generator")
     print("=" * 70)
     
     if not OPENAI_AVAILABLE:

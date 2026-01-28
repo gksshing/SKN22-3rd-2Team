@@ -1,11 +1,11 @@
 """
-Patent Guard v2.0 - OpenAI API Embedder (Antigravity Edition)
+Short-Cut v3.0 - OpenAI API Embedder (Antigravity Edition)
 ==============================================================
 Lightweight embedding generation using OpenAI text-embedding-3-small.
 
 No local models, no GPU required - pure API-based embeddings.
 
-Author: Patent Guard Team
+Author: Team 뀨💕
 License: MIT
 """
 
@@ -266,7 +266,7 @@ async def main():
     )
     
     print("\n" + "=" * 70)
-    print("🛡️  Patent Guard v2.0 - OpenAI Embedder Test")
+    print("⚡ 쇼특허 (Short-Cut) v3.0 - OpenAI Embedder Test")
     print(f"   Model: {config.embedding.model_id}")
     print(f"   Dimension: {config.embedding.embedding_dim}")
     print("=" * 70)

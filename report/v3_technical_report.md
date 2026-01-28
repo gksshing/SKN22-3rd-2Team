@@ -1,6 +1,6 @@
-# Patent Guard v3.0 기술 리포트 (Technical Report)
+# 쇼특허 (Short-Cut) v3.0 기술 리포트 (Technical Report)
 
-> **Project:** Patent Guard - AI 기반 특허 선행 기술 조사 시스템  
+> **Project:** Short-Cut - AI 기반 특허 선행 기술 조사 시스템  
 > **Version:** 3.0 Enterprise Edition  
 > **Date:** 2026-01-28  
 > **Author:** Senior Software Architect  
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-Patent Guard v3.0은 v2.0 "Antigravity" 아키텍처를 기반으로 **엔터프라이즈급 기능**을 추가한 메이저 업그레이드입니다.
+Short-Cut v3.0은 v2.0 "Antigravity" 아키텍처를 기반으로 **엔터프라이즈급 기능**을 추가한 메이저 업그레이드입니다.
 
 | 기능 | 상태 | 핵심 기술 |
 |------|------|----------|
@@ -248,7 +248,7 @@ flowchart LR
 
 ## 9. 결론
 
-Patent Guard v3.0은 **검색 정확도**, **사용자 경험**, **데이터 처리 견고성** 측면에서 significant improvements를 달성했습니다.
+Short-Cut v3.0은 **검색 정확도**, **사용자 경험**, **데이터 처리 견고성** 측면에서 significant improvements를 달성했습니다.
 
 - ✅ 하이브리드 검색으로 **의미 + 키워드 매칭** 동시 지원
 - ✅ LLM 스트리밍으로 **즉각적인 피드백** 제공
@@ -256,6 +256,6 @@ Patent Guard v3.0은 **검색 정확도**, **사용자 경험**, **데이터 처
 
 ---
 
-*Patent Guard v3.0 Technical Report*  
+*Short-Cut v3.0 Technical Report*  
 *Generated: 2026-01-28*  
 *© SKN22-3rd-2Team*

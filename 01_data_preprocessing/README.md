@@ -80,7 +80,8 @@ AI/NLP 도메인 키워드:
 
 | 파일명 | 용도 | 타입 |
 |--------|------|------|
-| `patent_index.bin` | FAISS Dense 검색 | IndexFlatIP |
+| `patent_index.bin` | FAISS Dense 검색 (Deprecated) | IndexFlatIP |
+| `pinecone_index` | Pinecone Serverless | Cosine Metric |
 | `bm25_index.pkl` | BM25 Sparse 검색 | rank-bm25 |
 | `chunk_metadata.pkl` | 청크 메타데이터 | Python dict |
 
@@ -138,8 +139,8 @@ AI/NLP 도메인 키워드:
      - 차원: 1536
      ↓
 [Stage 6] 인덱스 생성 (v3.0 신규)
-     - FAISS IndexFlatIP (Dense)
-     - BM25 인덱스 (Sparse)
+     - Pinecone Serverless (Dense) - Upsert
+     - BM25 인덱스 (Sparse) - Local Save
      ↓
 [Hybrid Search 준비 완료]
 ```
@@ -168,7 +169,7 @@ AI/NLP 도메인 키워드:
 | 추출된 청구항 | ~30,000개 |
 | 생성된 청크 | ~20,664개 |
 | 임베딩 벡터 | 20,664개 (1536차원) |
-| FAISS 인덱스 | 20,664 벡터 |
+| Pinecone 인덱스 | 20,664 벡터 (Serverless) |
 | BM25 문서 | 20,664개 |
 
 ### 3.4 품질 검증
@@ -192,7 +193,7 @@ AI/NLP 도메인 키워드:
      ↓
 [HyDE] 가상 청구항 생성
      ↓
-     ├──→ [FAISS Dense] 벡터 유사도 검색
+     ├──→ [Pinecone Dense] 벡터 유사도 검색
      │          ↓
      │    Top-K (semantic)
      │
@@ -263,6 +264,7 @@ SKN22-3rd-2Team/
 │           ├── bm25_index.pkl      # BM25 인덱스
 │           └── chunk_metadata.pkl  # 메타데이터
 ├── tests/
+│   ├── test_evaluation.py          # 🧪 DeepEval RAG 품질 테스트
 │   ├── test_hybrid_search.py       # RRF 테스트
 │   └── test_parser.py              # 파서 테스트
 └── 01_data_preprocessing/

@@ -1,9 +1,9 @@
 """
-Patent Guard v2.0 - Configuration Module (Antigravity Edition)
+쇼특허(Short-Cut) - Configuration Module (Antigravity Edition)
 ================================================================
-Lightweight configuration for OpenAI API + FAISS in-memory architecture.
+Lightweight configuration for OpenAI API + Pinecone Serverless architecture.
 
-Author: Patent Guard Team
+Author: Team 뀨💕
 License: MIT
 """
 
@@ -176,8 +176,6 @@ class FaissConfig:
     metadata_path: Path = field(default_factory=lambda: INDEX_DIR / "patent_metadata.pkl")
     
     # Index type
-    # - "Flat": Exact search (best for < 100K vectors)
-    # - "IVF": Approximate search (for larger datasets)
     index_type: str = "Flat"
     
     # Search configuration
@@ -186,6 +184,33 @@ class FaissConfig:
     # For IVF indexes (not used with Flat)
     nlist: int = 100  # Number of clusters
     nprobe: int = 10  # Number of clusters to search
+
+
+# =============================================================================
+# Pinecone Configuration
+# =============================================================================
+
+@dataclass
+class PineconeConfig:
+    """Pinecone vector database configuration (Serverless)."""
+    
+    # API Key (from environment variable)
+    api_key: str = os.environ.get("PINECONE_API_KEY", "")
+    
+    # Index Settings
+    index_name: str = "patent-guard-v3"
+    dimension: int = 1536  # Must match embedding model
+    metric: str = "cosine"  # or "dotproduct"
+    
+    # Cloud Settings (Serverless)
+    cloud: str = "aws"
+    region: str = "us-east-1"
+    
+    # Batch processing
+    batch_size: int = 100  # Recommended batch size for upsert
+    
+    # Namespace
+    namespace: str = "default"
 
 
 # =============================================================================
@@ -300,6 +325,7 @@ class PatentGuardConfig:
     domain: DomainConfig = field(default_factory=DomainConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     faiss: FaissConfig = field(default_factory=FaissConfig)
+    pinecone: PineconeConfig = field(default_factory=PineconeConfig)
     painet: PAINETConfig = field(default_factory=PAINETConfig)
     self_rag: SelfRAGConfig = field(default_factory=SelfRAGConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
@@ -342,7 +368,7 @@ def update_config_from_env() -> PatentGuardConfig:
 def print_config_summary() -> None:
     """Print configuration summary."""
     print("\n" + "=" * 70)
-    print("🛡️  Patent Guard v2.0 - Configuration Summary (Antigravity Mode)")
+    print("⚡ 쇼특허 (Short-Cut) v3.0 - Configuration Summary")
     print("=" * 70)
     print(f"\n📊 BigQuery:")
     print(f"   Project: {config.bigquery.project_id}")
@@ -351,21 +377,24 @@ def print_config_summary() -> None:
     
     print(f"\n🔍 Domain: {config.domain.domain_name}")
     print(f"   Keywords: {len(config.domain.keywords)} terms")
-    print(f"   IPC Codes: {', '.join(config.domain.ipc_codes)}")
     
     print(f"\n🧠 Embedding (OpenAI API):")
     print(f"   Model: {config.embedding.model_id}")
     print(f"   Dimension: {config.embedding.embedding_dim}")
     print(f"   API Key: {'✅ Set' if config.embedding.api_key else '❌ Not set'}")
     
-    print(f"\n🗄️  FAISS (In-Memory):")
-    print(f"   Index Path: {config.faiss.index_path}")
-    print(f"   Index Type: {config.faiss.index_type}")
+    print(f"\n🌲 Pinecone (Serverless):")
+    print(f"   Index Name: {config.pinecone.index_name}")
+    print(f"   Cloud: {config.pinecone.cloud} ({config.pinecone.region})")
+    print(f"   API Key: {'✅ Set' if config.pinecone.api_key else '❌ Not set'}")
     
+    print(f"\n🔎 Hybrid Search:")
+    print(f"   Dense: Pinecone (Cosine)")
+    print(f"   Sparse: Local BM25 (rank_bm25)")
+    print(f"   Fusion: RRF (k=60)")
+
     print(f"\n⚡ Pipeline:")
     print(f"   Max Workers: {config.pipeline.max_workers}")
-    print(f"   Pre-compute Mode: {config.pipeline.precompute_embeddings}")
-    
     print("=" * 70 + "\n")
 
 

@@ -1,5 +1,5 @@
 """
-Patent Guard v2.0 - BigQuery Data Extractor
+Short-Cut v3.0 - BigQuery Data Extractor
 ============================================
 Extracts patent data from Google Patents Public Dataset with cost optimization.
 
@@ -9,7 +9,7 @@ Features:
 - Filing date partitioning for efficiency
 - Async batch processing
 
-Author: Patent Guard Team
+Author: Team 뀨💕
 License: MIT
 """
 
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # Main patent extraction query with citation data
 PATENT_EXTRACTION_SQL = """
--- Patent Guard v2.0: RAG/sLLM Domain Patent Extraction
+-- Short-Cut v3.0: RAG/sLLM Domain Patent Extraction
 -- Generated: {generated_at}
 -- Domain: {domain_name}
 
@@ -537,7 +537,7 @@ async def main():
     )
     
     print("\n" + "=" * 70)
-    print("🛡️  Patent Guard v2.0 - BigQuery Data Extractor")
+    print("⚡ 쇼특허 (Short-Cut) v3.0 - BigQuery Data Extractor")
     print("=" * 70)
     
     # Initialize extractor

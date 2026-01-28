@@ -1,5 +1,5 @@
 """
-Patent Guard v2.0 - PAI-NET Triplet Generator
+Short-Cut v3.0 - PAI-NET Triplet Generator
 ==============================================
 Generates [Anchor - Positive - Negative] triplets for patent embedding training.
 
@@ -7,7 +7,7 @@ Uses citation relationships:
 - Positive pairs: Patents that cite each other
 - Negative pairs: Patents with no citation relationship
 
-Author: Patent Guard Team
+Author: Team 뀨💕
 License: MIT
 """
 
@@ -463,7 +463,7 @@ async def main():
     )
     
     print("\n" + "=" * 70)
-    print("🛡️  Patent Guard v2.0 - PAI-NET Triplet Generator")
+    print("⚡ 쇼특허 (Short-Cut) v3.0 - PAI-NET Triplet Generator")
     print("=" * 70)
     
     # Check for input file

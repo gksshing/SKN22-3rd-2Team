@@ -1,5 +1,5 @@
 """
-Patent Guard v2.0 - Source Package
+Short-Cut v3.0 - Source Package
 ===================================
 RAG and sLLM domain-specialized prior art search system.
 
@@ -13,7 +13,7 @@ Modules:
 - self_rag_generator: Self-RAG training data generation
 - pipeline: Main orchestration pipeline
 
-Author: Patent Guard Team
+Author: Team 뀨💕
 License: MIT
 """
 

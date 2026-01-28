@@ -1,0 +1,14 @@
+Collecting pinecone-client
+  Downloading pinecone_client-6.0.0-py3-none-any.whl.metadata (3.4 kB)
+Requirement already satisfied: certifi>=2019.11.17 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone-client) (2026.1.4)
+Collecting pinecone-plugin-interface<0.0.8,>=0.0.7 (from pinecone-client)
+  Downloading pinecone_plugin_interface-0.0.7-py3-none-any.whl.metadata (1.2 kB)
+Requirement already satisfied: python-dateutil>=2.5.3 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone-client) (2.9.0.post0)
+Requirement already satisfied: typing-extensions>=3.7.4 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone-client) (4.15.0)
+Requirement already satisfied: urllib3>=1.26.0 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone-client) (2.6.3)
+Requirement already satisfied: six>=1.5 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from python-dateutil>=2.5.3->pinecone-client) (1.17.0)
+Downloading pinecone_client-6.0.0-py3-none-any.whl (6.7 kB)
+Downloading pinecone_plugin_interface-0.0.7-py3-none-any.whl (6.2 kB)
+Installing collected packages: pinecone-plugin-interface, pinecone-client
+
+Successfully installed pinecone-client-6.0.0 pinecone-plugin-interface-0.0.7

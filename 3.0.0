@@ -1,0 +1,26 @@
+Collecting pinecone
+  Using cached pinecone-8.0.0-py3-none-any.whl.metadata (11 kB)
+Requirement already satisfied: certifi>=2019.11.17 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone) (2026.1.4)
+Requirement already satisfied: orjson>=3.0.0 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone) (3.11.5)
+Collecting pinecone-plugin-assistant<4.0.0,>=3.0.1 (from pinecone)
+  Using cached pinecone_plugin_assistant-3.0.1-py3-none-any.whl.metadata (30 kB)
+Requirement already satisfied: pinecone-plugin-interface<0.1.0,>=0.0.7 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone) (0.0.7)
+Requirement already satisfied: python-dateutil>=2.5.3 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone) (2.9.0.post0)
+Requirement already satisfied: typing-extensions>=3.7.4 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone) (4.15.0)
+Requirement already satisfied: urllib3>=1.26.0 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone) (2.6.3)
+Collecting packaging<25.0,>=24.2 (from pinecone-plugin-assistant<4.0.0,>=3.0.1->pinecone)
+  Using cached packaging-24.2-py3-none-any.whl.metadata (3.2 kB)
+Requirement already satisfied: requests<3.0.0,>=2.32.3 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from pinecone-plugin-assistant<4.0.0,>=3.0.1->pinecone) (2.32.5)
+Requirement already satisfied: charset_normalizer<4,>=2 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from requests<3.0.0,>=2.32.3->pinecone-plugin-assistant<4.0.0,>=3.0.1->pinecone) (3.4.4)
+Requirement already satisfied: idna<4,>=2.5 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from requests<3.0.0,>=2.32.3->pinecone-plugin-assistant<4.0.0,>=3.0.1->pinecone) (3.11)
+Requirement already satisfied: six>=1.5 in c:\users\playdata\miniconda3\envs\patent-guard\lib\site-packages (from python-dateutil>=2.5.3->pinecone) (1.17.0)
+Using cached pinecone-8.0.0-py3-none-any.whl (745 kB)
+Using cached pinecone_plugin_assistant-3.0.1-py3-none-any.whl (280 kB)
+Using cached packaging-24.2-py3-none-any.whl (65 kB)
+Installing collected packages: packaging, pinecone-plugin-assistant, pinecone
+  Attempting uninstall: packaging
+    Found existing installation: packaging 25.0
+    Uninstalling packaging-25.0:
+      Successfully uninstalled packaging-25.0
+
+Successfully installed packaging-24.2 pinecone-8.0.0 pinecone-plugin-assistant-3.0.1

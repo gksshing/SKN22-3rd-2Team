@@ -1,4 +1,4 @@
-# Patent Guard v3.0 기술 고도화 수정 제안서
+# 쇼특허 (Short-Cut) v3.0 기술 고도화 수정 제안서
 
 > **Author:** Senior Software Architect  
 > **Date:** 2026-01-28  
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-Patent Guard v2.0 (Antigravity)은 기능 구현이 완료되었으나, 엔터프라이즈급 상용 서비스로 발전시키기 위해 다음 4가지 핵심 영역의 고도화가 필요합니다:
+Short-Cut v2.0 (Antigravity)은 기능 구현이 완료되었으나, 엔터프라이즈급 상용 서비스로 발전시키기 위해 다음 4가지 핵심 영역의 고도화가 필요합니다:
 
 | 영역 | 현재 상태 | 개선 목표 | 우선순위 |
 |------|----------|----------|---------|
@@ -406,7 +406,7 @@ class PrivateLLMRouter:
 
 ```mermaid
 gantt
-    title Patent Guard v3.0 Implementation Roadmap
+    title Short-Cut v3.0 Implementation Roadmap
     dateFormat  YYYY-MM-DD
     
     section Phase 1 - Core
@@ -439,4 +439,4 @@ gantt
 ---
 
 *Prepared by: Senior Software Architect*  
-*Patent Guard v3.0 Technical Proposal*
+*Short-Cut v3.0 Technical Proposal*
