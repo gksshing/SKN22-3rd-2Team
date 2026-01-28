@@ -101,15 +101,28 @@ class ProcessedPatent:
 
 
 # =============================================================================
-# Claim Parser
+# Claim Parser (Enhanced v3.0)
 # =============================================================================
 
 class ClaimParser:
-    """Parse patent claims into individual numbered claims."""
+    """
+    Enhanced patent claim parser with multi-level fallback.
     
-    # Regex patterns for claim extraction
+    Parsing Strategy (in order):
+    1. Regex Pattern Matching - Standard claim formats
+    2. Structure-Based Parsing - Indent and numbering analysis
+    3. NLP Sentence Segmentation - Spacy-based fallback
+    4. Minimal Split - Ultimate fallback for any text
+    
+    Supports:
+    - US/EP format: "1. A method comprising..."
+    - Korean format: "제1항: ...", "청구항 1: ..."
+    - Mixed numbering: "(1)", "[1]", "1)", etc.
+    """
+    
+    # Regex patterns for claim extraction (ordered by format commonality)
     CLAIM_PATTERNS = [
-        # Pattern 1: "1. A method comprising..."
+        # Pattern 1: Standard US/EP "1. A method comprising..." - MOST COMMON
         r'(?P<num>\d+)\.\s*(?P<text>(?:(?!\n\d+\.).)+)',
         
         # Pattern 2: "Claim 1: A method..."
@@ -117,23 +130,64 @@ class ClaimParser:
         
         # Pattern 3: Numbered with parentheses "(1) A method..."
         r'\((?P<num>\d+)\)\s*(?P<text>(?:(?!\n\(\d+\)).)+)',
+        
+        # Pattern 4: Numbered with brackets "[1] A method..."
+        r'\[(?P<num>\d+)\]\s*(?P<text>(?:(?!\n\[\d+\]).)+)',
+        
+        # Pattern 5: Korean format "제1항:" or "청구항 1:"
+        r'(?:제|청구항\s*)(?P<num>\d+)(?:항)?[:\.]?\s*(?P<text>(?:(?!\n(?:제|청구항\s*)\d+).)+)',
+        
+        # Pattern 6: Simple numbered "1)" format
+        r'(?P<num>\d+)\)\s*(?P<text>(?:(?!\n\d+\)).)+)',
     ]
     
-    # Patterns indicating dependent claims
+    # Patterns indicating dependent claims (multilingual)
     DEPENDENT_PATTERNS = [
+        # English patterns
         r'according to claim\s*(\d+)',
         r'as claimed in claim\s*(\d+)',
         r'of claim\s*(\d+)',
         r'claim\s*(\d+),?\s*wherein',
-        r'the (?:method|system|apparatus|device) of claim\s*(\d+)',
+        r'the (?:method|system|apparatus|device|invention) of claim\s*(\d+)',
+        r'as set forth in claim\s*(\d+)',
+        
+        # Korean patterns
+        r'제\s*(\d+)\s*항에\s*있어서',
+        r'청구항\s*(\d+)에\s*있어서',
+        r'제\s*(\d+)\s*항에\s*따른',
     ]
+    
+    # NLP model cache
+    _nlp = None
+    _nlp_available = None
     
     def __init__(self, domain_config: DomainConfig = config.domain):
         self.rag_keywords = [kw.lower() for kw in domain_config.rag_component_keywords]
+        self._init_nlp()
+    
+    @classmethod
+    def _init_nlp(cls):
+        """Initialize Spacy NLP model for fallback parsing."""
+        if cls._nlp_available is not None:
+            return
+        
+        try:
+            import spacy
+            try:
+                cls._nlp = spacy.load("en_core_web_sm")
+                cls._nlp_available = True
+                logger.info("Spacy NLP model loaded for claim parsing")
+            except OSError:
+                # Model not installed
+                cls._nlp_available = False
+                logger.warning("Spacy model 'en_core_web_sm' not found. Install with: python -m spacy download en_core_web_sm")
+        except ImportError:
+            cls._nlp_available = False
+            logger.warning("Spacy not installed. NLP fallback disabled. Install with: pip install spacy")
     
     def parse_claims_text(self, claims_text: str) -> List[ParsedClaim]:
         """
-        Parse claims text into individual claims.
+        Parse claims text into individual claims using multi-level fallback.
         
         Args:
             claims_text: Full claims section text
@@ -144,17 +198,58 @@ class ClaimParser:
         if not claims_text or not claims_text.strip():
             return []
         
-        # Try each pattern
+        # Clean input
+        claims_text = self._preprocess_text(claims_text)
+        
+        # Level 1: Regex Pattern Matching
+        claims = self._regex_parse(claims_text)
+        if claims:
+            logger.debug(f"Parsed {len(claims)} claims using regex patterns")
+            return self._finalize_claims(claims)
+        
+        # Level 2: Structure-Based Parsing (indent/numbering)
+        claims = self._structure_based_parse(claims_text)
+        if claims:
+            logger.debug(f"Parsed {len(claims)} claims using structure analysis")
+            return self._finalize_claims(claims)
+        
+        # Level 3: NLP Sentence Segmentation
+        if self._nlp_available and self._nlp:
+            claims = self._nlp_fallback_parse(claims_text)
+            if claims:
+                logger.debug(f"Parsed {len(claims)} claims using NLP segmentation")
+                return self._finalize_claims(claims)
+        
+        # Level 4: Minimal Split (ultimate fallback)
+        claims = self._minimal_parse(claims_text)
+        logger.debug(f"Parsed {len(claims)} claims using minimal split")
+        return self._finalize_claims(claims)
+    
+    def _preprocess_text(self, text: str) -> str:
+        """Preprocess claims text for parsing."""
+        # Normalize line endings
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+        
+        # Remove common header patterns
+        text = re.sub(r'^(?:CLAIMS?|What is claimed is:?|We claim:?)\s*\n', '', text, flags=re.IGNORECASE)
+        
+        # Normalize multiple newlines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        return text.strip()
+    
+    def _regex_parse(self, claims_text: str) -> List[ParsedClaim]:
+        """Level 1: Standard regex pattern matching."""
         claims = []
         
         for pattern in self.CLAIM_PATTERNS:
             matches = list(re.finditer(pattern, claims_text, re.DOTALL | re.MULTILINE))
-            if matches:
+            if matches and len(matches) >= 1:
                 for match in matches:
                     claim_num = int(match.group('num'))
                     claim_text = self._clean_claim_text(match.group('text'))
                     
-                    if claim_text:  # Skip empty claims
+                    if claim_text and len(claim_text) > 10:  # Skip very short claims
                         claim_type, parent_claim = self._determine_claim_type(claim_text)
                         rag_components = self._detect_rag_components(claim_text)
                         
@@ -165,25 +260,217 @@ class ClaimParser:
                             parent_claim=parent_claim,
                             rag_components=rag_components,
                         ))
-                break  # Use first matching pattern
-        
-        # Fallback: split by numbered lines if no pattern matched
-        if not claims:
-            claims = self._fallback_parse(claims_text)
-        
-        # Sort by claim number
-        claims.sort(key=lambda c: c.claim_number)
+                
+                if claims:  # Only return if we found valid claims
+                    break
         
         return claims
     
+    def _structure_based_parse(self, claims_text: str) -> List[ParsedClaim]:
+        """
+        Level 2: Parse based on document structure (indent, numbering).
+        
+        Analyzes:
+        - Indentation levels
+        - Numbering patterns
+        - Line breaks between claims
+        """
+        claims = []
+        lines = claims_text.split('\n')
+        
+        # Detect numbering patterns in the document
+        numbered_lines = []
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            # Various numbering patterns
+            patterns = [
+                (r'^(\d+)[.\):\]]\s*(.*)$', 1, 2),  # "1. ", "1) ", "1: ", "1] "
+                (r'^\[(\d+)\]\s*(.*)$', 1, 2),       # "[1] "
+                (r'^\((\d+)\)\s*(.*)$', 1, 2),       # "(1) "
+                (r'^(?:Claim|제|청구항)\s*(\d+)[:\.]?\s*(.*)$', 1, 2),  # "Claim 1: "
+            ]
+            
+            for pattern, num_group, text_group in patterns:
+                match = re.match(pattern, stripped, re.IGNORECASE)
+                if match:
+                    indent = len(line) - len(line.lstrip())
+                    numbered_lines.append({
+                        'line_idx': i,
+                        'num': int(match.group(num_group)),
+                        'text_start': match.group(text_group),
+                        'indent': indent,
+                    })
+                    break
+        
+        if not numbered_lines:
+            return []
+        
+        # Build claims from numbered sections
+        for idx, item in enumerate(numbered_lines):
+            start_line = item['line_idx']
+            
+            # Find end of this claim (next numbered line or end)
+            if idx + 1 < len(numbered_lines):
+                end_line = numbered_lines[idx + 1]['line_idx']
+            else:
+                end_line = len(lines)
+            
+            # Collect claim text
+            claim_lines = [item['text_start']]
+            for j in range(start_line + 1, end_line):
+                line_text = lines[j].strip()
+                if line_text:
+                    claim_lines.append(line_text)
+            
+            claim_text = ' '.join(claim_lines)
+            claim_text = self._clean_claim_text(claim_text)
+            
+            if claim_text and len(claim_text) > 10:
+                claim_type, parent = self._determine_claim_type(claim_text)
+                claims.append(ParsedClaim(
+                    claim_number=item['num'],
+                    claim_text=claim_text,
+                    claim_type=claim_type,
+                    parent_claim=parent,
+                    rag_components=self._detect_rag_components(claim_text),
+                ))
+        
+        return claims
+    
+    def _nlp_fallback_parse(self, claims_text: str) -> List[ParsedClaim]:
+        """
+        Level 3: NLP-based sentence segmentation fallback.
+        
+        Uses Spacy for sentence boundary detection when structured
+        parsing fails.
+        """
+        if not self._nlp:
+            return []
+        
+        claims = []
+        
+        # Process with Spacy
+        doc = self._nlp(claims_text[:100000])  # Limit for performance
+        
+        sentences = list(doc.sents)
+        if not sentences:
+            return []
+        
+        claim_num = 0
+        current_claim_sentences = []
+        
+        for sent in sentences:
+            sent_text = sent.text.strip()
+            
+            # Check if sentence starts a new numbered claim
+            num_match = re.match(r'^(\d+)[.\):\]]\s*', sent_text)
+            
+            if num_match:
+                # Save previous claim
+                if current_claim_sentences:
+                    claim_text = ' '.join(current_claim_sentences)
+                    claim_text = self._clean_claim_text(claim_text)
+                    if claim_text and len(claim_text) > 10:
+                        claim_type, parent = self._determine_claim_type(claim_text)
+                        claims.append(ParsedClaim(
+                            claim_number=claim_num if claim_num > 0 else 1,
+                            claim_text=claim_text,
+                            claim_type=claim_type,
+                            parent_claim=parent,
+                            rag_components=self._detect_rag_components(claim_text),
+                        ))
+                
+                claim_num = int(num_match.group(1))
+                current_claim_sentences = [sent_text[num_match.end():].strip()]
+            else:
+                current_claim_sentences.append(sent_text)
+        
+        # Don't forget last claim
+        if current_claim_sentences:
+            claim_text = ' '.join(current_claim_sentences)
+            claim_text = self._clean_claim_text(claim_text)
+            if claim_text and len(claim_text) > 10:
+                claim_type, parent = self._determine_claim_type(claim_text)
+                claims.append(ParsedClaim(
+                    claim_number=claim_num if claim_num > 0 else len(claims) + 1,
+                    claim_text=claim_text,
+                    claim_type=claim_type,
+                    parent_claim=parent,
+                    rag_components=self._detect_rag_components(claim_text),
+                ))
+        
+        return claims
+    
+    def _minimal_parse(self, claims_text: str) -> List[ParsedClaim]:
+        """
+        Level 4: Ultimate fallback - split by paragraph or treat as single claim.
+        """
+        claims = []
+        
+        # Try splitting by double newlines (paragraphs) or single newlines with blank lines
+        # Also handle Windows-style line endings
+        paragraphs = re.split(r'\n\s*\n|\r\n\s*\r\n', claims_text)
+        paragraphs = [p.strip() for p in paragraphs if p.strip() and len(p.strip()) > 15]
+        
+        if len(paragraphs) > 1:
+            # Multiple paragraphs - treat each as a claim
+            for i, para in enumerate(paragraphs, 1):
+                claim_text = self._clean_claim_text(para)
+                if claim_text:
+                    claim_type, parent = self._determine_claim_type(claim_text)
+                    claims.append(ParsedClaim(
+                        claim_number=i,
+                        claim_text=claim_text,
+                        claim_type=claim_type,
+                        parent_claim=parent,
+                        rag_components=self._detect_rag_components(claim_text),
+                    ))
+        else:
+            # Single block - treat as claim 1
+            claim_text = self._clean_claim_text(claims_text)
+            if claim_text:
+                claims.append(ParsedClaim(
+                    claim_number=1,
+                    claim_text=claim_text,
+                    claim_type="independent",
+                    parent_claim=None,
+                    rag_components=self._detect_rag_components(claim_text),
+                ))
+        
+        return claims
+    
+    def _finalize_claims(self, claims: List[ParsedClaim]) -> List[ParsedClaim]:
+        """Sort and deduplicate claims."""
+        # Remove duplicates by claim number (keep first)
+        seen_nums = set()
+        unique_claims = []
+        for claim in claims:
+            if claim.claim_number not in seen_nums:
+                seen_nums.add(claim.claim_number)
+                unique_claims.append(claim)
+        
+        # Sort by claim number
+        unique_claims.sort(key=lambda c: c.claim_number)
+        
+        return unique_claims
+    
     def _clean_claim_text(self, text: str) -> str:
         """Clean and normalize claim text."""
+        if not text:
+            return ""
+        
         # Remove excessive whitespace
         text = re.sub(r'\s+', ' ', text)
+        
         # Strip leading/trailing whitespace
         text = text.strip()
+        
         # Remove trailing claim numbers from next claim
         text = re.sub(r'\s*\d+\.\s*$', '', text)
+        
+        # Remove common artifacts
+        text = re.sub(r'^[-*•]\s*', '', text)  # Bullet points
+        
         return text
     
     def _determine_claim_type(self, claim_text: str) -> Tuple[str, Optional[int]]:
@@ -205,6 +492,9 @@ class ClaimParser:
     
     def _detect_rag_components(self, claim_text: str) -> List[str]:
         """Detect RAG-related component keywords in claim."""
+        if not claim_text:
+            return []
+        
         claim_lower = claim_text.lower()
         detected = []
         
@@ -213,51 +503,6 @@ class ClaimParser:
                 detected.append(keyword)
         
         return detected
-    
-    def _fallback_parse(self, claims_text: str) -> List[ParsedClaim]:
-        """Fallback parsing when no pattern matches."""
-        claims = []
-        
-        # Split by lines starting with numbers
-        lines = claims_text.split('\n')
-        current_claim = []
-        current_num = None
-        
-        for line in lines:
-            # Check if line starts a new claim
-            match = re.match(r'^(\d+)[.\)]\s*(.*)$', line.strip())
-            if match:
-                # Save previous claim if exists
-                if current_num is not None and current_claim:
-                    claim_text = ' '.join(current_claim)
-                    claim_type, parent = self._determine_claim_type(claim_text)
-                    claims.append(ParsedClaim(
-                        claim_number=current_num,
-                        claim_text=claim_text,
-                        claim_type=claim_type,
-                        parent_claim=parent,
-                        rag_components=self._detect_rag_components(claim_text),
-                    ))
-                
-                current_num = int(match.group(1))
-                current_claim = [match.group(2)]
-            else:
-                if current_num is not None:
-                    current_claim.append(line.strip())
-        
-        # Don't forget last claim
-        if current_num is not None and current_claim:
-            claim_text = ' '.join(current_claim)
-            claim_type, parent = self._determine_claim_type(claim_text)
-            claims.append(ParsedClaim(
-                claim_number=current_num,
-                claim_text=claim_text,
-                claim_type=claim_type,
-                parent_claim=parent,
-                rag_components=self._detect_rag_components(claim_text),
-            ))
-        
-        return claims
 
 
 # =============================================================================
