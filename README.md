@@ -12,14 +12,15 @@
 
 | 기능 | 설명 |
 |------|------|
-| **HyDE** | 사용자 아이디어를 가상 특허 청구항으로 변환하여 검색 품질 향상 |
+| **Multi-Query RAG** | 3가지 관점(기술/청구항/문제해결)으로 쿼리를 확장하여 검색 커버리지 극대화 |
+| **IPC Filtering** | 관심 기술 분야(IPC) 필터링으로 검색 정확도 향상 (User-friendly 라벨 제공) |
 | **Hybrid Search** | Pinecone (Dense) + Local BM25 (Sparse) + RRF 융합 검색 |
+| **Reranker** | Cross-Encoder(ms-marco)를 활용한 검색 결과 정밀 재정렬 |
+| **Claim-Level Analysis** | '모든 구성요소 법칙'을 적용하여 각 특허의 위험 청구항 정밀 분석 |
+| **Feedback Loop** | 사용자 피드백(👍/👎) 수집 및 Reranker 학습 데이터 구축 |
 | **Serverless DB** | Pinecone 벡터 DB를 활용한 확장성 있는 데이터 관리 |
 | **LLM Streaming** | 실시간 분석 결과 출력 (0초 체감 대기시간) |
-| **4-Level Parser** | 다국어 청구항 파싱 (US/EP/KR 형식 지원) |
-| **Grading Loop** | 검색 결과 관련성 평가, 자동 재검색 |
-| **Critical CoT** | 유사도/침해/회피 분석 + 근거 특허 명시 |
-| **QA Automation** | DeepEval 기반 RAG 품질 검증 (Faithfulness/Relevancy) |
+| **Visualization** | 특허 지형도 (Jitter/Connection Line) 및 전략 가이드 제공 |
 
 ---
 
@@ -32,7 +33,7 @@
 conda create -n patent-guard python=3.11 -y
 conda activate patent-guard
 
-# 의존성 설치
+# 의존성 설치 (sentence-transformers 포함)
 pip install -r requirements.txt
 
 # NLP 모델 다운로드 (선택)
@@ -64,6 +65,7 @@ python src/pipeline.py --stage 5
 ```bash
 streamlit run app.py
 ```
+*최초 실행 시 Reranker 모델 다운로드로 인해 약 10~20초 소요될 수 있습니다.*
 
 ---
 
@@ -71,28 +73,25 @@ streamlit run app.py
 
 ```
 SKN22-3rd-2Team/
-├── app.py                   # 🎯 Streamlit 웹 앱 (루트 위치)
+├── app.py                   # 🎯 Streamlit 웹 앱 (메인)
 ├── src/
-│   ├── patent_agent.py      # Self-RAG 에이전트 (HyDE + Grading + CoT)
-│   ├── vector_db.py         # Pinecone + BM25 하이브리드 검색
+│   ├── analysis_logic.py    # 분석 오케스트레이션 (검색+분석+스트리밍)
+│   ├── patent_agent.py      # Self-RAG 에이전트 (Multi-Query + Claim Analysis)
+│   ├── vector_db.py         # Pinecone + BM25 하이브리드 검색 (IPC 필터)
+│   ├── reranker.py          # Cross-Encoder Reranker
+│   ├── feedback_logger.py   # 피드백 수집 (JSONL)
+│   ├── history_manager.py   # 분석 이력 관리 (SQLite)
+│   ├── session_manager.py   # 세션 관리
+│   ├── ui/                  # UI 컴포넌트
+│   │   ├── components.py    # 결과 렌더링, 사이드바
+│   │   ├── visualization.py # 특허 지형도 시각화
+│   │   └── styles.py        # CSS 스타일
 │   ├── preprocessor.py      # 4-Level 청구항 파서
 │   ├── embedder.py          # OpenAI 임베딩
-│   ├── pipeline.py          # 파이프라인 오케스트레이터
-│   ├── config.py            # 설정 관리
-│   └── data/
-│       ├── raw/             # 원본 특허 데이터
-│       ├── processed/       # 전처리된 데이터
-│       ├── embeddings/      # 임베딩 벡터
-│       └── index/           # 로컬 BM25 인덱스
-├── tests/
-│   ├── test_evaluation.py     # 🧪 DeepEval RAG 품질 테스트
-│   ├── test_hybrid_search.py  # RRF 알고리즘 테스트
-│   ├── test_parser.py         # 청구항 파서 테스트
-│   └── conftest.py            # pytest 설정
-├── report/
-│   ├── v3_technical_proposal.md  # 기술 제안서
-│   ├── v3_technical_report.md    # 기술 리포트
-│   └── test_report*.html/txt     # 테스트 리포트
+│   └── pipeline.py          # 파이프라인 오케스트레이터
+├── logs/                    # 피드백 로그 및 시스템 로그
+├── tests/                   # 🧪 DeepEval 및 단위 테스트
+├── report/                  # 📄 기술 문서
 ├── requirements.txt
 └── README.md
 ```
@@ -113,26 +112,24 @@ SKN22-3rd-2Team/
 
 ---
 
-## 📊 분석 파이프라인
+## 📊 분석 파이프라인 (Advanced)
 
 ```
-[사용자 아이디어]
+[사용자 아이디어] & [IPC 필터]
         ↓
-[HyDE] 가상 청구항 생성
+[Multi-Query Gen] 3가지 관점 쿼리 생성
         ↓
-[Hybrid Search] Pinecone (Dense) + BM25 (Sparse)
+[Parallel Search] (Pinecone Dense + BM25 Sparse) x 3
         ↓
-[RRF Fusion] 검색 결과 융합 (k=60)
+[IPC Filtering] 기술 분야 필터링
         ↓
-[Grading] 관련성 평가 (필요시 재검색)
+[RRF Fusion] 검색 결과 통합 및 중복 제거
         ↓
-[Streaming Analysis] 실시간 상세 분석
+[Reranker] Cross-Encoder 정밀 재정렬 (Top-5 선정)
         ↓
-[분석 결과]
-├── 유사도 평가 (0-100점)
-├── 침해 리스크 (high/medium/low)
-├── 구성요소 대비표
-└── 회피 전략
+[Claim Analysis] 'All Elements Rule' 기반 청구항 정밀 분석
+        ↓
+[Streaming Output] 실시간 리포트 생성
 ```
 
 ---
