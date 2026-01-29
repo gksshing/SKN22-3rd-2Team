@@ -20,37 +20,42 @@ async def run_analysis_streaming(agent, user_idea: str, results, output_containe
     return full_text
 
 
-async def run_full_analysis(user_idea: str, status_container, streaming_container, db_client, use_hybrid: bool = True):
-    """Run the complete patent analysis with streaming and semantic caching."""
+@st.cache_resource
+def load_reranker():
+    """Load Reranker model (cached)."""
+    try:
+        from src.reranker import Reranker
+        return Reranker()
+    except Exception as e:
+        print(f"Reranker load failed: {e}")
+        return None
+
+async def run_full_analysis(
+    user_idea: str, 
+    status_container, 
+    streaming_container, 
+    db_client, 
+    use_hybrid: bool = True,
+    ipc_filters: list = None
+):
+    """Run the complete patent analysis with streaming and caching."""
     
+    # Check for cached result first
     user_id = st.session_state.get("user_id", "unknown")
-    
-    # Create agent early for embedding
+    if "history_manager" in st.session_state:
+        # IPC 필터가 없을 때만 캐시 사용 (단순화를 위해)
+        if not ipc_filters:
+            cached_result = st.session_state.history_manager.find_cached_result(user_idea, user_id)
+            if cached_result:
+                st.toast("⚡ 이미 분석된 아이디어입니다. 저장된 결과를 불러옵니다.")
+                await asyncio.sleep(0.5)
+                return cached_result
+
+    # Create agent with cached DB client
     agent = PatentAgent(db_client=db_client)
     
-    # ========================================
-    # Semantic Cache Check
-    # ========================================
-    if "history_manager" in st.session_state:
-        # First, embed the user idea for semantic comparison
-        with status_container.status("🔍 캐시 확인 중...", expanded=False):
-            query_embedding = await agent.embed_text(user_idea)
-        
-        # Check semantic cache (returns tuple: result, similarity)
-        cached_result, similarity = st.session_state.history_manager.find_cached_result_semantic(
-            user_idea, user_id, query_embedding
-        )
-        
-        if cached_result:
-            if similarity >= 1.0:
-                st.toast("⚡ 동일한 아이디어가 있습니다. 캐시된 결과를 불러옵니다.")
-            else:
-                st.toast(f"🧠 유사한 분석 결과 발견! ({similarity:.0%} 유사도) 캐시된 결과를 불러옵니다.")
-            await asyncio.sleep(0.5)
-            return cached_result
-        
-        # Store embedding for later use (avoid re-embedding)
-        st.session_state._current_query_embedding = query_embedding
+    # Load Reranker
+    reranker = load_reranker()
     
     results = []
     start_time = time.time()
@@ -60,57 +65,76 @@ async def run_full_analysis(user_idea: str, status_container, streaming_containe
     
     with status_container.status("🔍 특허 분석 중...", expanded=True) as status:
         # Step 1: HyDE (~3초)
-        progress_bar.progress(5, text="📝 Step 1/4: 가상 청구항 생성 중... (예상: 3초)")
-        status.write("📝 **Step 1/4**: HyDE - 가상 청구항 생성 중...")
+        progress_bar.progress(5, text="📝 Step 1/5: 가상 청구항 생성 중... (예상: 3초)")
+        status.write("📝 **Step 1/5**: HyDE - 가상 청구항 생성 중...")
         hypothetical_claim = await agent.generate_hypothetical_claim(user_idea)
-        progress_bar.progress(25, text="✅ Step 1 완료!")
+        progress_bar.progress(20, text="✅ Step 1 완료!")
         status.write(f"✅ 가상 청구항 생성 완료")
-        status.write(f"```\n{hypothetical_claim[:200]}...\n```")
         
-        # Step 2: Hybrid Search (~2초)
-        search_type = "Hybrid (Dense + BM25)" if use_hybrid else "Dense Only"
-        progress_bar.progress(30, text=f"🔎 Step 2/4: {search_type} 검색 중... (예상: 2초)")
-        status.write(f"🔎 **Step 2/4**: {search_type} 검색 중...")
+        # Step 2: Multi-Query Search (~4초)
+        search_type = "Multi-Query Hybrid" if use_hybrid else "Multi-Query Dense"
+        if ipc_filters:
+            search_type += f" (IPC 필터: {', '.join(ipc_filters)})"
+            
+        progress_bar.progress(25, text=f"🔎 Step 2/5: {search_type} 검색 중... (예상: 4초)")
+        status.write(f"🔎 **Step 2/5**: {search_type} 검색 중... (3가지 관점)")
         
-        query_embedding = await agent.embed_text(hypothetical_claim)
-        keywords = await agent.extract_keywords(user_idea + " " + hypothetical_claim)
-        query_text = " ".join(keywords)
+        # Use Multi-Query Search (Parallel) -> Get Top 15 candidates
+        queries, search_results = await agent.search_multi_query(
+            user_idea, top_k=15, use_hybrid=use_hybrid, ipc_filters=ipc_filters
+        )
         
-        if use_hybrid:
-            search_results = await agent.db_client.async_hybrid_search(
-                query_embedding, query_text, top_k=5
-            )
+        # Display generated queries
+        with status.expander("생성된 검색 쿼리 보기", expanded=False):
+            for i, q in enumerate(queries):
+                st.write(f"**Q{i+1}**: {q}")
+        
+        progress_bar.progress(45, text="✅ Step 2 완료!")
+        status.write(f"✅ {len(search_results)}개 후보 특허 발견 (중복 제거됨)")
+        
+        # Step 3: Reranking (~3초)
+        if reranker and search_results:
+            progress_bar.progress(50, text="🎯 Step 3/5: Cross-Encoder 정밀 재정렬 중... (예상: 3초)")
+            status.write("🎯 **Step 3/5**: Cross-Encoder 정밀 재정렬 중...")
+            
+            # Convert PatentSearchResult to dict for Reranker
+            docs_for_rerank = []
+            for r in search_results:
+                docs_for_rerank.append({
+                    "doc_obj": r, # Keep original object reference
+                    "title": r.title,
+                    "abstract": r.abstract,
+                    "claims": r.claims
+                })
+            
+            # Rerank
+            reranked_docs = reranker.rerank(user_idea, docs_for_rerank, top_k=5)
+            
+            # Update results list with reranked order and scores
+            results = []
+            for doc in reranked_docs:
+                r = doc['doc_obj']
+                # Store rerank score somewhere if needed, currently not in PatentSearchResult
+                results.append(r)
+                
+            status.write(f"✅ Top 5 특허 선정 완료 (Reranked)")
         else:
-            search_results = await agent.db_client.async_search(query_embedding, top_k=5)
+            results = search_results[:5]
+            status.write("⚠️ Reranker 미사용 (Top 5 반환)")
+            
+        progress_bar.progress(60, text="✅ Step 3 완료!")
         
-        results = []
-        for r in search_results:
-            results.append(PatentSearchResult(
-                publication_number=r.patent_id,
-                title=r.metadata.get("title", ""),
-                abstract=r.metadata.get("abstract", r.content[:500]),
-                claims=r.metadata.get("claims", ""),
-                ipc_codes=[r.metadata.get("ipc_code", "")] if r.metadata.get("ipc_code") else [],
-                similarity_score=r.score,
-                dense_score=getattr(r, 'dense_score', 0.0),
-                sparse_score=getattr(r, 'sparse_score', 0.0),
-                rrf_score=getattr(r, 'rrf_score', 0.0),
-            ))
-        
-        progress_bar.progress(50, text="✅ Step 2 완료!")
-        status.write(f"✅ {len(results)}개 유사 특허 발견")
-        
-        # Step 3: Grading (~3초)
-        progress_bar.progress(55, text="📊 Step 3/4: 관련성 평가 중... (예상: 3초)")
-        status.write("📊 **Step 3/4**: 관련성 평가 중...")
+        # Step 4: Grading (~3초)
+        progress_bar.progress(65, text="📊 Step 4/5: 관련성 평가 중... (예상: 3초)")
+        status.write("📊 **Step 4/5**: LLM 관련성 평가 중...")
         grading = await agent.grade_results(user_idea, results)
-        progress_bar.progress(75, text="✅ Step 3 완료!")
+        progress_bar.progress(80, text="✅ Step 4 완료!")
         status.write(f"✅ 평균 관련성 점수: {grading.average_score:.2f}")
         
         status.update(label="✅ 검색 완료! 분석 스트리밍 시작...", state="complete", expanded=False)
     
-    # Step 4: Streaming Analysis (~10초)
-    progress_bar.progress(80, text="🧠 Step 4/4: AI 분석 스트리밍 중... (예상: 10초)")
+    # Step 5: Streaming Analysis (~10초)
+    progress_bar.progress(85, text="🧠 Step 5/5: AI 분석 스트리밍 중... (예상: 10초)")
     streaming_container.markdown("### 🧠 실시간 분석 결과")
     streaming_container.caption("AI가 분석 내용을 실시간으로 생성합니다...")
     

@@ -707,17 +707,21 @@ class PineconeClient:
         query_embedding: np.ndarray,
         top_k: int = 10,
         normalize: bool = False, # Handled by Pinecone usually
+        ipc_filters: List[str] = None,
     ) -> List[SearchResult]:
         """
-        Dense search using Pinecone.
+        Dense search using Pinecone with optional IPC filtering.
         """
         if query_embedding.ndim > 1:
             query_embedding = query_embedding[0] # Take first if batch
             
+        # If filtering, fetch more results to allow for filtering
+        fetch_k = top_k * 5 if ipc_filters else top_k
+            
         try:
             response = self.index.query(
                 vector=query_embedding.tolist(),
-                top_k=top_k,
+                top_k=fetch_k,
                 include_metadata=True,
                 namespace=self.config.namespace
             )
@@ -735,6 +739,16 @@ class PineconeClient:
             local_meta = self.metadata.get(chunk_id, {})
             
             # Prefer local metadata for full context if avail, else fallback to Pinecone meta
+            final_meta = local_meta or meta
+            ipc_code = final_meta.get("ipc_code", meta.get("ipc_code", ""))
+            
+            # Filter logic: Check if ipc_code starts with any of the filters
+            if ipc_filters:
+                # ipc_filters example: ['G06', 'H04']
+                # ipc_code example: "G06Q 50/10"
+                if not any(ipc_code.startswith(f) for f in ipc_filters):
+                    continue
+            
             content = local_meta.get("content") or meta.get("text", "")
             patent_id = local_meta.get("patent_id") or meta.get("patent_id", "")
             
@@ -745,8 +759,13 @@ class PineconeClient:
                 content=content,
                 content_type=local_meta.get("content_type", "unknown"),
                 dense_score=score,
-                metadata=local_meta or meta
+                metadata=final_meta
             ))
+            
+            if len(results) >= top_k:
+                break
+                
+        return results
             
         return results
 
@@ -757,18 +776,42 @@ class PineconeClient:
         top_k: int = 10,
         dense_weight: float = 0.5,
         sparse_weight: float = 0.5,
+        ipc_filters: List[str] = None,
         rrf_k: int = 60,
         normalize: bool = True,
     ) -> List[SearchResult]:
         """
-        Hybrid search (Pinecone Dense + Local BM25) with RRF.
-        Identical logic to FaissClient.hybrid_search.
+        Hybrid search (Pinecone Dense + Local BM25) with RRF and IPC Filtering.
         """
-        # Dense search (Pinecone)
-        dense_results = self.search(query_embedding, top_k=top_k * 2)
+        # 1. Dense Search (Pinecone) with IPC Filtering
+        dense_results = self.search(
+            query_embedding, 
+            top_k=top_k * 2,
+            ipc_filters=ipc_filters
+        )
         
-        # Sparse search (Local BM25)
-        sparse_raw = self.bm25_engine.search(query_text, top_k=top_k * 2)
+        # 2. Sparse Search (Local BM25) with local filtering
+        # Fetch more if filtering
+        sparse_fetch_k = top_k * 10 if ipc_filters else top_k * 2
+        sparse_raw = self.bm25_engine.search(query_text, top_k=sparse_fetch_k)
+        
+        # Filter sparse results locally
+        filtered_sparse = []
+        for item in sparse_raw:
+            # BM25 returns (chunk_id, score, meta)
+            chunk_id, score, meta = item
+            
+            # Check IPC Filter
+            if ipc_filters:
+                ipc_code = meta.get("ipc_code", "") or (meta.get("ipc_codes", [""]) or [""])[0]
+                if not any(ipc_code.startswith(f) for f in ipc_filters):
+                    continue
+            
+            filtered_sparse.append(item)
+            if len(filtered_sparse) >= top_k * 2:
+                break
+                
+        sparse_results = filtered_sparse
         
         # RRF Fusion
         rrf_scores: Dict[str, float] = defaultdict(float)
@@ -781,7 +824,7 @@ class PineconeClient:
             chunk_data[result.chunk_id] = result
         
         # Process sparse results
-        for rank, (chunk_id, score, meta) in enumerate(sparse_raw):
+        for rank, (chunk_id, score, meta) in enumerate(sparse_results):
             rrf_scores[chunk_id] += sparse_weight / (rrf_k + rank + 1)
             
             if chunk_id not in chunk_data:
@@ -815,7 +858,7 @@ class PineconeClient:
                 result.score = rrf_score
                 final_results.append(result)
         
-        logger.info(f"Pinecone Hybrid: {len(dense_results)} dense + {len(sparse_raw)} sparse -> {len(final_results)} fused")
+        logger.info(f"Pinecone Hybrid(IPC={ipc_filters}): {len(dense_results)} dense + {len(sparse_results)} sparse -> {len(final_results)} fused")
         
         return final_results
 

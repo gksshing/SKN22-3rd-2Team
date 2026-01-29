@@ -45,6 +45,32 @@ def render_sidebar(openai_api_key, db_client, db_stats):
         apply_theme_css()
         
         # ----------------------------------------------------
+        # 🔧 검색 옵션 (IPC 필터링)
+        # ----------------------------------------------------
+        st.markdown("### 🔧 검색 옵션")
+        
+        IPC_CATEGORIES = {
+            "G06 (컴퓨터/AI)": "G06",
+            "H04 (통신/네트워크)": "H04",
+            "A61 (의료/헬스케어)": "A61",
+            "H01 (반도체/전자)": "H01",
+            "B60 (차량/운송)": "B60",
+            "C12 (바이오/생명)": "C12",
+            "F02 (기계/엔진)": "F02",
+        }
+        
+        selected_categories = st.multiselect(
+            "관심 기술 분야 (선택 시 필터링)",
+            options=list(IPC_CATEGORIES.keys()),
+            default=[],
+            help="특정 기술 분야(IPC)로 검색 범위를 제한하여 정확도를 높입니다."
+        )
+        
+        selected_ipc_codes = [IPC_CATEGORIES[cat] for cat in selected_categories]
+        
+        st.divider()
+        
+        # ----------------------------------------------------
         # 📖 특허 가이드 (Patent Guide) - YouTube Popup
         # ----------------------------------------------------
         st.markdown("### 📖 특허 가이드")
@@ -93,8 +119,8 @@ def render_sidebar(openai_api_key, db_client, db_stats):
         # Team Info
         st.markdown("##### Team 뀨💕")
         
-        # Hybrid search is always enabled (removed toggle)
-        return True
+        # Return tuple: (use_hybrid=True always, selected_ipc_codes)
+        return True, selected_ipc_codes
 
 
 def render_search_results(result):
@@ -183,6 +209,52 @@ def render_search_results(result):
                             )
                     except Exception as e:
                         st.error(f"PDF 생성 실패: {e}")
+        
+        # ========================================
+        # Feedback Section
+        # ========================================
+        st.divider()
+        st.markdown("### 📣 분석 품질 피드백")
+        st.caption("이 분석 결과가 도움이 되었나요? 피드백을 남겨주시면 검색 품질 개선에 활용됩니다.")
+        
+        from src.feedback_logger import save_feedback
+        
+        user_idea = result.get("user_idea", "")
+        search_results = result.get("search_results", [])
+        user_id = st.session_state.get("user_id", "unknown")
+        
+        if search_results:
+            for i, patent in enumerate(search_results[:5]):  # Top 5 patents
+                patent_id = patent.get("patent_id", f"unknown_{i}")
+                title = patent.get("title", "제목 없음")[:50]
+                grading_score = patent.get("grading_score", 0)
+                
+                col1, col2, col3 = st.columns([4, 1, 1])
+                
+                with col1:
+                    st.markdown(f"**{i+1}. {title}...** (유사도: {grading_score:.0%})")
+                
+                with col2:
+                    if st.button("👍", key=f"fb_pos_{patent_id}_{i}", help="이 특허는 관련 있어요"):
+                        save_feedback(
+                            query=user_idea,
+                            patent_id=patent_id,
+                            score=1,
+                            user_id=user_id,
+                            metadata={"grading_score": grading_score, "title": title}
+                        )
+                        st.toast(f"✅ '{patent_id}' 관련성 피드백 저장됨!")
+                
+                with col3:
+                    if st.button("👎", key=f"fb_neg_{patent_id}_{i}", help="이 특허는 관련 없어요"):
+                        save_feedback(
+                            query=user_idea,
+                            patent_id=patent_id,
+                            score=-1,
+                            user_id=user_id,
+                            metadata={"grading_score": grading_score, "title": title}
+                        )
+                        st.toast(f"❌ '{patent_id}' 비관련 피드백 저장됨!")
 
     with tab2:
         from src.ui.visualization import render_patent_map

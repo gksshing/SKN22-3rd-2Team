@@ -52,7 +52,7 @@ def load_db_client():
 DB_CLIENT, DB_STATS = load_db_client()
 
 # Sidebar
-use_hybrid = render_sidebar(OPENAI_API_KEY, DB_CLIENT, DB_STATS)
+use_hybrid, selected_ipc_codes = render_sidebar(OPENAI_API_KEY, DB_CLIENT, DB_STATS)
 
 # Main Content - Input
 st.markdown("### 💡 아이디어 입력")
@@ -98,7 +98,14 @@ if analyze_button and can_analyze:
         asyncio.set_event_loop(loop)
         
         result = loop.run_until_complete(
-            run_full_analysis(user_idea, status_container, streaming_container, DB_CLIENT, use_hybrid=use_hybrid)
+            run_full_analysis(
+                user_idea, 
+                status_container, 
+                streaming_container, 
+                DB_CLIENT, 
+                use_hybrid=use_hybrid,
+                ipc_filters=selected_ipc_codes
+            )
         )
         
         loop.close()

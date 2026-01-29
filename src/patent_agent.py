@@ -274,6 +274,44 @@ class PatentAgent:
         )
         return np.array(response.data[0].embedding, dtype=np.float32)
     
+    async def generate_multi_queries(self, user_idea: str) -> List[str]:
+        """
+        Generate multiple search queries for better coverage.
+        Returns 3 queries: 
+        1. Technical reformulation (synonyms)
+        2. Claim-style phrasing
+        3. Problem-solution keywords
+        """
+        system_prompt = """당신은 특허 검색 전문가입니다. 사용자의 아이디어를 바탕으로 검색 범위를 넓히기 위해 3가지 다른 관점의 검색 쿼리를 생성하십시오.
+JSON 형식으로 응답하십시오:
+{
+  "queries": [
+    "쿼리 1: 전문 용어 및 유의어 중심 (Technical Formulation)",
+    "쿼리 2: 청구항 스타일 구문 (Claim-style Phrasing)",
+    "쿼리 3: 해결하려는 과제와 솔루션 키워드 (Problem-Solution)"
+  ]
+}"""
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model=HYDE_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_idea}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7,
+            )
+            
+            data = json_loads(response.choices[0].message.content)
+            queries = data.get("queries", [])
+            logger.info(f"Generated {len(queries)} multi-queries")
+            return queries[:3]  # Ensure max 3
+            
+        except Exception as e:
+            logger.error(f"Multi-query generation failed: {e}")
+            return [user_idea]  # Fallback to original
+
     async def hyde_search(
         self,
         user_idea: str,
@@ -281,14 +319,7 @@ class PatentAgent:
         use_hybrid: bool = True,
     ) -> Tuple[str, List[PatentSearchResult]]:
         """
-        HyDE-enhanced patent search with optional hybrid search.
-        
-        1. Generate hypothetical claim from user idea
-        2. Embed the hypothetical claim
-        3. Search using hybrid (dense + sparse) or dense only
-        
-        Returns:
-            Tuple of (hypothetical_claim, search_results)
+        HyDE-enhanced patent search (Single Query Version).
         """
         # Generate hypothetical claim
         hypothetical_claim = await self.generate_hypothetical_claim(user_idea)
@@ -297,27 +328,32 @@ class PatentAgent:
         if not self.index_loaded():
             logger.warning("Index not loaded. Returning empty results.")
             return hypothetical_claim, []
+            
+        results = await self._execute_search(hypothetical_claim, user_idea, top_k, use_hybrid)
+        return hypothetical_claim, results
+
+    async def _execute_search(self, query_text: str, context_text: str, top_k: int, use_hybrid: bool) -> List[PatentSearchResult]:
+        """Internal helper to execute actual search."""
+        # Embed query
+        query_embedding = await self.embed_text(query_text)
         
-        # Embed the hypothetical claim
-        query_embedding = await self.embed_text(hypothetical_claim)
-        
-        # Extract keywords for hybrid search
-        keywords = await self.extract_keywords(user_idea + " " + hypothetical_claim)
-        query_text = " ".join(keywords)
+        # Extract keywords
+        keywords = await self.extract_keywords(context_text + " " + query_text)
+        keyword_query = " ".join(keywords)
         
         # Search
         if use_hybrid:
             search_results = await self.db_client.async_hybrid_search(
                 query_embedding,
-                query_text,
+                keyword_query,
                 top_k=top_k,
                 dense_weight=DENSE_WEIGHT,
                 sparse_weight=SPARSE_WEIGHT,
             )
         else:
             search_results = await self.db_client.async_search(query_embedding, top_k=top_k)
-        
-        # Convert to PatentSearchResult
+            
+        # Convert objects
         results = []
         for r in search_results:
             results.append(PatentSearchResult(
@@ -331,13 +367,51 @@ class PatentAgent:
                 sparse_score=getattr(r, 'sparse_score', 0.0),
                 rrf_score=getattr(r, 'rrf_score', 0.0),
             ))
+        return results
+
+    async def search_multi_query(
+        self,
+        user_idea: str,
+        top_k: int = TOP_K_RESULTS,
+        use_hybrid: bool = True,
+    ) -> Tuple[List[str], List[PatentSearchResult]]:
+        """
+        Multi-Query RAG Search.
+        Executes 3 queries in parallel and deduplicates results.
+        """
+        # 1. Generate queries (Parallel with HyDE gen if needed, but here simple sequential)
+        queries = await self.generate_multi_queries(user_idea)
+        if not queries:
+            queries = [user_idea]
+            
+        logger.info(f"Executing Multi-Query Search with: {queries}")
         
-        if results:
-            logger.info(f"Hybrid search found {len(results)} results (top RRF score: {results[0].rrf_score:.4f})")
-        else:
-            logger.info("No results found")
+        # 2. Parallel Execution using asyncio.gather
+        tasks = [
+            self._execute_search(query, user_idea, top_k, use_hybrid)
+            for query in queries
+        ]
         
-        return hypothetical_claim, results
+        results_list = await asyncio.gather(*tasks)
+        
+        # 3. Deduplication & Fusion
+        seen_ids = set()
+        merged_results = []
+        
+        # Simple Fusion: Round-Robin or Score-based?
+        # Using Score-based here (Flatten and sort by RRF/Sim score)
+        all_results = [item for sublist in results_list for item in sublist]
+        
+        # Sort by score descending before dedup to keep highest scoring instance
+        all_results.sort(key=lambda x: x.rrf_score if use_hybrid else x.similarity_score, reverse=True)
+        
+        for r in all_results:
+            if r.publication_number not in seen_ids:
+                seen_ids.add(r.publication_number)
+                merged_results.append(r)
+        
+        logger.info(f"Multi-Query: {len(all_results)} total -> {len(merged_results)} unique results")
+        return queries, merged_results[:top_k*2]  # Return more candidates for grading
     
     # =========================================================================
     # 2. Grading & Rewrite Loop
@@ -591,24 +665,40 @@ JSON 형식으로 응답:
         ])
         
         system_prompt = """당신은 특허 분쟁 대응 전문 변리사입니다. 
-제공된 선행 특허(Context)와 사용자의 아이디어를 대비 분석하여 전략 리포트를 작성하십시오.
+제공된 선행 특허(Context)와 사용자의 아이디어를 '청구항 단위(Claim-Level)'로 정밀 분석하여 전략 리포트를 작성하십시오.
 
 **중요**: 마크다운 형식으로 실시간 출력하십시오.
 
-분석 원칙:
-1. 구성요소 대비 분석: 사용자의 기술이 선행 특허 청구항의 모든 구성요소를 포함하는지 확인
-2. 침해 리스크 판정: High/Medium/Low로 구분
-3. 회피 전략: 침해를 피하기 위한 구체적인 기술 변경 제안
+분석 절차:
+1. **청구항 특정**: 각 특허에서 가장 침해 위험이 높은 '대표 청구항'을 하나씩 특정하십시오.
+2. **구성요소 대비 (All Elements Rule)**: 
+   - 사용자의 아이디어(A)가 선행 특허 청구항(B)의 모든 구성요소를 포함하는지(A ⊇ B) 검토하십시오.
+   - 하나라도 포함하지 않으면 비침해(회피 가능)로 판단하십시오.
+3. **침해 리스크 판정**: 
+   - High: 아이디어에 청구항의 모든 구성요소가 포함됨 (문언 침해 위험)
+   - Medium: 일부 구성요소가 균등물로 치환 가능함 (균등 침해 위험)
+   - Low: 청구항의 핵심 구성요소가 아이디어에 없음 (자유 실시 가능)
 
 출력 형식 (마크다운):
 ## 1. 유사도 평가
-(점수 및 분석)
+- **핵심 기술**: (아이디어 정의)
+- **종합 점수**: (0-100점)
+- (특허별 간단 코멘트)
 
-## 2. 침해 리스크
-(위험 수준 및 요소)
+## 2. 청구항 기반 침해 리스크
+※ 각 특허별로 가장 위험한 청구항을 분석합니다.
+
+### [특허번호] 제목
+- **위험 청구항**: (예: 제1항)
+- **구성요소 대비**:
+  - [아이디어 구성] vs [청구항 구성] → **일치/불일치**
+  - (불일치 시 이유 설명)
+- **리스크**: 🔴 High / 🟡 Medium / 🟢 Low
+
+(다른 특허들도 동일하게 반복...)
 
 ## 3. 회피 전략
-(구체적 전략)
+(회피 설계 제안)
 
 ## 4. 결론
 (최종 권고)"""
@@ -619,7 +709,7 @@ JSON 형식으로 응답:
 [참조 특허 목록 (선행 기술)]
 {patents_text}
 
-위 선행 특허들과 사용자 아이디어를 대비 분석하여 전략 리포트를 작성하십시오."""
+위 선행 특허들의 **청구항(Claims)**을 중심으로 아이디어와 정밀 대비 분석을 수행하십시오."""
 
         response = await self.client.chat.completions.create(
             model=ANALYSIS_MODEL,

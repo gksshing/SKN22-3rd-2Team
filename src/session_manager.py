@@ -53,7 +53,7 @@ def load_history():
 
 
 def save_result_to_history(result: dict):
-    """Save result to history and session, including embedding for semantic cache."""
+    """Save result to history and session."""
     st.session_state.current_result = result
     
     # Init history list if needed (though load_history guarantees it)
@@ -62,20 +62,10 @@ def save_result_to_history(result: dict):
         
     st.session_state.analysis_history.append(result)
     
-    # Get embedding from session (stored during cache check)
-    embedding = st.session_state.get("_current_query_embedding", None)
-    
-    # Save to persistent history with embedding
+    # Save to persistent history
     user_id = get_user_id()
-    if st.session_state.history_manager.save_analysis(result, user_id, embedding):
-        if embedding is not None:
-            st.toast("✅ 분석 결과가 시맨틱 캐시와 함께 저장되었습니다!")
-        else:
-            st.toast("✅ 분석 결과가 저장되었습니다.")
-    
-    # Clear the temporary embedding
-    if "_current_query_embedding" in st.session_state:
-        del st.session_state._current_query_embedding
+    if st.session_state.history_manager.save_analysis(result, user_id):
+        st.toast("✅ 분석 결과가 히스토리에 저장되었습니다!")
         
     # Keep only recent history in memory
     if len(st.session_state.analysis_history) > 20:
