@@ -157,20 +157,17 @@ def render_patent_map(result: dict):
     st.plotly_chart(fig, use_container_width=True)
     
     # Revised Analysis Guide (Premium)
-    st.markdown("""
+    st.markdown(f"""
     <div style='background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #2980b9;'>
         <h4 style='color: #2c3e50; margin-top:0;'>🛡️ 전략 가이드: 특허 방어 모델 (Guardian Model)</h4>
         <p style='font-size: 14px; color: #555;'>
-            귀하의 아이디어(<b>🏰 MY CORE IDEA</b>)는 우측 상단(1.0, 1.0)의 <b>안전한 성(Castle)</b>으로 표현됩니다.
-            타사 특허들이 얼마나 내 성에 가까이 접근(침범)하고 있는지 확인하세요.
+            귀하의 아이디어(<b>🏰 MY CORE IDEA</b>)는 우측 상단(1.0, 1.0)의 <b>안전한 성(Castle)</b>으로 표현됩니다. 타사 특허들이 얼마나 내 성에 가까이 접근(침범)하고 있는지 확인하세요.
         </p>
-        
         <h5 style='color: #34495e; margin-bottom: 5px;'>📊 축(Axis) 설명</h5>
         <ul style='font-size: 14px; color: #555; margin-top: 5px;'>
             <li><b>X축 - 기술적 정렬도 (Alignment)</b>: AI가 평가한 <b>기술적 유사도</b>입니다. 우측(1.0)에 가까울수록 귀하의 아이디어와 기술 사상이 일치하여 <span style='color:#e74c3c'>침해 위험이 높습니다</span>.</li>
             <li><b>Y축 - 분석 심도 (Depth)</b>: 해당 특허의 <b>분석 우선순위</b>를 나타냅니다. 상단에 있을수록 더 상세한 검토가 필요한 특허입니다.</li>
         </ul>
-        
         <h5 style='color: #34495e; margin-bottom: 5px;'>🎨 범주(Category) 설명</h5>
         <ul style='font-size: 14px; color: #555; margin-top: 5px;'>
             <li><b>🔴 CRITICAL THREAT (핵심 위협)</b>: 방어선 안쪽으로 깊숙이 침투한 특허들입니다. <span style='color:#e74c3c'>점선</span>으로 연결된 특허는 직접적인 충돌 위험이 있습니다.</li>

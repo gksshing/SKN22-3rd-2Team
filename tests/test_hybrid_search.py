@@ -13,13 +13,15 @@ Team: 뀨💕
 
 import pytest
 import sys
+import copy
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from collections import defaultdict
 from typing import List, Tuple, Dict, Any
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add project root to path (so 'src' package is resolvable)
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # =============================================================================
@@ -91,49 +93,19 @@ def sparse_search_results():
 # RRF Algorithm Implementation (Extracted for Testing)
 # =============================================================================
 
-def rrf_fusion(
-    dense_results: List[Any],
-    sparse_results: List[Tuple[str, float, Dict]],
-    dense_weight: float = 0.5,
-    sparse_weight: float = 0.5,
-    rrf_k: int = 60,
-) -> List[Tuple[str, float]]:
-    """
-    RRF (Reciprocal Rank Fusion) algorithm.
-    
-    Formula: RRF_score = sum(weight / (k + rank + 1))
-    
-    Args:
-        dense_results: List of SearchResult objects from FAISS
-        sparse_results: List of (chunk_id, score, metadata) from BM25
-        dense_weight: Weight for dense search contribution
-        sparse_weight: Weight for sparse search contribution
-        rrf_k: RRF constant (default 60, higher = less emphasis on top ranks)
-    
-    Returns:
-        Sorted list of (chunk_id, rrf_score) tuples
-    """
-    rrf_scores: Dict[str, float] = defaultdict(float)
-    
-    # Process dense results
-    for rank, result in enumerate(dense_results):
-        chunk_id = result.chunk_id if hasattr(result, 'chunk_id') else result
-        rrf_scores[chunk_id] += dense_weight / (rrf_k + rank + 1)
-    
-    # Process sparse results
-    for rank, (chunk_id, score, meta) in enumerate(sparse_results):
-        rrf_scores[chunk_id] += sparse_weight / (rrf_k + rank + 1)
-    
-    # Sort by RRF score descending
-    sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-    
-    return sorted_results
+# =============================================================================
+# Helper Functions - Import from source
+# =============================================================================
+
+from src.vector_db import compute_rrf  # Ensure this is imported properly
+
 
 
 # =============================================================================
 # Test Class: Hybrid Search RRF
 # =============================================================================
 
+@pytest.mark.unit
 class TestHybridSearchRRF:
     """Test suite for RRF (Reciprocal Rank Fusion) algorithm."""
     
@@ -154,16 +126,17 @@ class TestHybridSearchRRF:
         due to their high individual rankings (rank #1 in their respective search).
         """
         # Execute RRF fusion
-        results = rrf_fusion(
+        results = compute_rrf(
             dense_results=dense_search_results,
             sparse_results=sparse_search_results,
             dense_weight=0.5,
             sparse_weight=0.5,
             rrf_k=60,
+            top_k=50,
         )
         
-        # Get top 3 chunk IDs
-        top_3_ids = [chunk_id for chunk_id, _ in results[:3]]
+        # Get top 3 chunk IDs (results are SearchResult objects)
+        top_3_ids = [r.chunk_id for r in results[:3]]
         
         # Assertions - Both #1 ranked docs should be in top 3
         assert "doc_a" in top_3_ids, (
@@ -184,19 +157,20 @@ class TestHybridSearchRRF:
         With equal weights, documents ranked #1 in either search
         should receive equal contribution to their RRF score.
         """
-        results = rrf_fusion(
+        results = compute_rrf(
             dense_results=dense_search_results,
             sparse_results=sparse_search_results,
             dense_weight=0.5,
             sparse_weight=0.5,
             rrf_k=60,
+            top_k=50,
         )
         
         # Find scores for doc_a and doc_b
-        scores = {chunk_id: score for chunk_id, score in results}
+        scores = {r.chunk_id: r.score for r in results}
         
         # With rrf_k=60, rank 0 contribution = weight / (60 + 0 + 1) = weight / 61
-        expected_contribution = 0.5 / 61
+        # expected_contribution = 0.5 / 61
         
         # Doc A only has dense, Doc B only has sparse
         # Their single contributions should be nearly equal
@@ -216,15 +190,16 @@ class TestHybridSearchRRF:
         With dense_weight=0.8, documents ranked high in Dense search
         should have higher RRF scores than those ranked high only in Sparse.
         """
-        results = rrf_fusion(
+        results = compute_rrf(
             dense_results=dense_search_results,
             sparse_results=sparse_search_results,
             dense_weight=0.8,
             sparse_weight=0.2,
             rrf_k=60,
+            top_k=50, 
         )
         
-        scores = {chunk_id: score for chunk_id, score in results}
+        scores = {r.chunk_id: r.score for r in results}
         
         # Doc A (Dense #1) should score higher than Doc B (Sparse #1)
         assert scores["doc_a"] > scores["doc_b"], (
@@ -233,7 +208,7 @@ class TestHybridSearchRRF:
         )
         
         # Verify doc_a is #1 overall
-        top_id = results[0][0]
+        top_id = results[0].chunk_id
         assert top_id == "doc_a", (
             f"With dense_weight=0.8, Doc A should be #1, but #{1} is: {top_id}"
         )
@@ -249,15 +224,16 @@ class TestHybridSearchRRF:
         With sparse_weight=0.8, documents ranked high in Sparse search
         should have higher RRF scores than those ranked high only in Dense.
         """
-        results = rrf_fusion(
+        results = compute_rrf(
             dense_results=dense_search_results,
             sparse_results=sparse_search_results,
             dense_weight=0.2,
             sparse_weight=0.8,
             rrf_k=60,
+            top_k=50,
         )
         
-        scores = {chunk_id: score for chunk_id, score in results}
+        scores = {r.chunk_id: r.score for r in results}
         
         # Doc B (Sparse #1) should score higher than Doc A (Dense #1)
         assert scores["doc_b"] > scores["doc_a"], (
@@ -272,7 +248,7 @@ class TestHybridSearchRRF:
         When dense search returns no results, RRF should still work
         using only sparse results without crashing.
         """
-        results = rrf_fusion(
+        results = compute_rrf(
             dense_results=[],  # Empty
             sparse_results=sparse_search_results,
             dense_weight=0.5,
@@ -283,8 +259,8 @@ class TestHybridSearchRRF:
         assert len(results) > 0, "Should still have results from sparse search"
         
         # Top result should be doc_b (Sparse #1)
-        assert results[0][0] == "doc_b", (
-            f"With no dense results, Sparse #1 (doc_b) should be top, got: {results[0][0]}"
+        assert results[0].chunk_id == "doc_b", (
+            f"With no dense results, Sparse #1 (doc_b) should be top, got: {results[0].chunk_id}"
         )
     
     def test_edge_case_empty_sparse_results(self, dense_search_results):
@@ -294,7 +270,7 @@ class TestHybridSearchRRF:
         When sparse search returns no results, RRF should still work
         using only dense results without crashing.
         """
-        results = rrf_fusion(
+        results = compute_rrf(
             dense_results=dense_search_results,
             sparse_results=[],  # Empty
             dense_weight=0.5,
@@ -305,8 +281,8 @@ class TestHybridSearchRRF:
         assert len(results) > 0, "Should still have results from dense search"
         
         # Top result should be doc_a (Dense #1)
-        assert results[0][0] == "doc_a", (
-            f"With no sparse results, Dense #1 (doc_a) should be top, got: {results[0][0]}"
+        assert results[0].chunk_id == "doc_a", (
+            f"With no sparse results, Dense #1 (doc_a) should be top, got: {results[0].chunk_id}"
         )
     
     def test_edge_case_both_empty(self):
@@ -316,7 +292,7 @@ class TestHybridSearchRRF:
         When both searches return no results, RRF should return
         an empty list without crashing.
         """
-        results = rrf_fusion(
+        results = compute_rrf(
             dense_results=[],
             sparse_results=[],
             dense_weight=0.5,
@@ -338,20 +314,22 @@ class TestHybridSearchRRF:
         With k=60 (default), rank 0 contribution = 1/61
         With k=10 (lower), rank 0 contribution = 1/11 (much higher)
         """
-        results_k60 = rrf_fusion(
-            dense_results=dense_search_results,
-            sparse_results=sparse_search_results,
+        results_k60 = compute_rrf(
+            dense_results=copy.deepcopy(dense_search_results),
+            sparse_results=copy.deepcopy(sparse_search_results),
             rrf_k=60,
+            top_k=50,
         )
         
-        results_k10 = rrf_fusion(
-            dense_results=dense_search_results,
-            sparse_results=sparse_search_results,
+        results_k10 = compute_rrf(
+            dense_results=copy.deepcopy(dense_search_results),
+            sparse_results=copy.deepcopy(sparse_search_results),
             rrf_k=10,
+            top_k=50,
         )
         
-        scores_k60 = {chunk_id: score for chunk_id, score in results_k60}
-        scores_k10 = {chunk_id: score for chunk_id, score in results_k10}
+        scores_k60 = {r.chunk_id: r.score for r in results_k60}
+        scores_k10 = {r.chunk_id: r.score for r in results_k10}
         
         # With lower k, top-ranked documents get relatively higher scores
         # The gap between #1 and #10 should be larger with k=10

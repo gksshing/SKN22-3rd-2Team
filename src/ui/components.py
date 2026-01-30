@@ -10,14 +10,14 @@ def render_header():
     """Render the application header."""
     st.markdown("""
     <div class="main-header">
-        <h1>⚡ 쇼특허 (Short-Cut) v3.0</h1>
+        <h1>⚡ 쇼특허 (Short-Cut)</h1>
         <p style="font-size: 1.2rem; color: #888;">AI 기반 특허 선행 기술 조사 시스템</p>
         <p style="font-size: 0.9rem; color: #666;">Self-RAG | Hybrid Search | LLM Streaming</p>
     </div>
     """, unsafe_allow_html=True)
 
 
-def render_sidebar(openai_api_key, db_client, db_stats):
+def render_sidebar(openai_api_key, db_client):
     """Render the sidebar."""
     
     # Log status to terminal (not shown in UI)
@@ -31,14 +31,12 @@ def render_sidebar(openai_api_key, db_client, db_stats):
         
     if db_client:
         logger.info(f"✅ Hybrid 인덱스 로드됨 - Pinecone Connected")
-        if db_stats.get('bm25_initialized'):
-            logger.info(f"   📝 BM25 (Local): {db_stats.get('bm25_docs', 0):,}개 문서")
     else:
         logger.warning("⚠️ DB 연결 실패")
     
     with st.sidebar:
         st.markdown("# ⚡ 쇼특허")
-        st.markdown("### Short-Cut v3.0")
+        st.markdown("### Short-Cut")
         st.divider()
         
         # Apply theme CSS (Hardcoded Ivory/Light)
@@ -147,7 +145,7 @@ def render_search_results(result):
             label="🎯 유사도 점수",
             value=f"{score}/100",
             delta="위험" if score >= 70 else ("주의" if score >= 40 else "양호"),
-            delta_color="inverse" if score >= 40 else "normal",
+            delta_color="normal" if score < 40 else "inverse",
         )
     
     with col2:
@@ -188,27 +186,31 @@ def render_search_results(result):
             )
             
         with col_d2:
-            if st.button("📄 리포트 다운로드 (PDF)"):
-                with st.spinner("PDF 생성 중..."):
-                    try:
-                        from src.pdf_generator import PDFGenerator
-                        import tempfile
-                        
+            try:
+                from src.pdf_generator import PDFGenerator
+                import tempfile
+                
+                # Check if PDF data is already in session state for this result
+                result_id = result.get("timestamp", "")
+                pdf_key = f"pdf_data_{result_id}"
+                
+                if pdf_key not in st.session_state:
+                    with st.spinner("PDF 준비 중..."):
                         pdf_gen = PDFGenerator()
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                             pdf_path = pdf_gen.generate_report(result, tmp.name)
-                            
                             with open(pdf_path, "rb") as f:
-                                pdf_data = f.read()
-                                
-                            st.download_button(
-                                label="📥 PDF 저장하기",
-                                data=pdf_data,
-                                file_name=f"shortcut_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                                mime="application/pdf",
-                            )
-                    except Exception as e:
-                        st.error(f"PDF 생성 실패: {e}")
+                                st.session_state[pdf_key] = f.read()
+                
+                st.download_button(
+                    label="📄 리포트 다운로드 (PDF)",
+                    data=st.session_state[pdf_key],
+                    file_name=f"shortcut_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.error(f"PDF 생성 실패: {e}")
         
         # ========================================
         # Feedback Section
@@ -318,7 +320,27 @@ def render_search_results(result):
             for c in comp.get("idea_components", []):
                 st.markdown(f"- {c}")
         
-        with col2:
-            st.markdown("#### ✅ 일치 (선행 특허에 존재)")
-            for c in comp.get("matched_components", []):
-                st.markdown(f"- 🔴 {c}")
+            with col2:
+                st.markdown("#### ✅ 일치 (선행 특허에 존재)")
+                for c in comp.get("matched_components", []):
+                    st.markdown(f"- 🔴 {c}")
+                    
+    # ========================================
+    # 🧠 실시간 분석 결과 (Persistent)
+    # ========================================
+    if result.get("streamed_analysis"):
+        st.divider()
+        st.markdown("### 🧠 실시간 분석 내용")
+        st.markdown(result["streamed_analysis"])
+
+def render_footer():
+    """Render the application footer with disclaimer."""
+    st.divider()
+    st.markdown("""
+    <div style="text-align: center; color: #999; font-size: 0.8rem; margin-top: 2rem; padding-bottom: 2rem;">
+        <p>⚠️ <b>면책 조항 (Disclaimer)</b></p>
+        <p>본 시스템은 인공지능(AI) 기술을 기반으로 정보를 제공하며, 기술적 한계로 인해 부정확하거나 편향된 정보를 생성할 수 있습니다(환각 현상 등).<br>
+        분석 결과는 참고용으로만 활용하시기 바라며, 법적 효력을 갖는 특허 검토나 출원 결정은 반드시 전문 변리사 등 전문가와 상의하시기 바랍니다.</p>
+        <p>© 2026 Short-Cut Team. All rights reserved.</p>
+    </div>
+    """, unsafe_allow_html=True)

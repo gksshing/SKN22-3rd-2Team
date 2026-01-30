@@ -19,9 +19,11 @@ from unittest.mock import MagicMock, patch
 from typing import List
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add project root to path (so 'src' package is resolvable)
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from preprocessor import ClaimParser, ParsedClaim
+from src.preprocessor import ClaimParser, ParsedClaim
+from src.config import config as real_config
 
 
 # =============================================================================
@@ -30,12 +32,12 @@ from preprocessor import ClaimParser, ParsedClaim
 
 @pytest.fixture
 def parser():
-    """Create a ClaimParser instance with mocked domain config."""
-    with patch('preprocessor.config') as mock_config:
-        mock_config.domain.rag_component_keywords = [
-            "retrieval", "embedding", "vector", "neural", "transformer"
-        ]
-        return ClaimParser()
+    """Create a ClaimParser instance with explicitly mocked domain config."""
+    mock_domain = MagicMock()
+    mock_domain.rag_component_keywords = [
+        "retrieval", "embedding", "vector", "neural", "transformer"
+    ]
+    return ClaimParser(domain_config=mock_domain)
 
 
 @pytest.fixture
@@ -112,6 +114,7 @@ The present invention relates to a method and system for analyzing patent docume
 # Test Class: ClaimParser 4-Level Fallback
 # =============================================================================
 
+@pytest.mark.unit
 class TestClaimParserLevel1Regex:
     """Level 1 Tests - Standard Regex Parsing."""
     
@@ -171,8 +174,8 @@ class TestClaimParserLevel1Regex:
         
         Note: Explicitly inject rag_keywords to ensure detection works.
         """
-        # Explicitly set rag_keywords (mock config doesn't always apply)
-        parser.rag_keywords = ["retrieval", "embedding", "vector", "neural", "transformer"]
+        # Note: 'rag_keywords' are already injected via the 'parser' fixture's mock config
+        # (retrieval, embedding, vector, neural, transformer)
         
         claims = parser.parse_claims_text(standard_us_claims)
         
@@ -200,7 +203,31 @@ class TestClaimParserLevel1Regex:
             "Claim 1 should contain 'vector database'"
         )
 
+    def test_config_dependency_check(self, parser):
+        """
+        Integration Check: Verify that DEFAULT parser initialization pulls from src.config.
+        """
+        # 1. Verify the Fixture is using MOCKED keys (Unit Test isolation)
+        expected_mock_keywords = ["retrieval", "embedding", "vector", "neural", "transformer"]
+        assert parser.rag_keywords == expected_mock_keywords, "Fixture should use mocked keywords"
 
+        # 2. Verify that DEFAULT initialization uses REAL config (Integration)
+        real_parser = ClaimParser() # Use default arg (=config.domain)
+        
+        # Load real keywords from config, normalize to lower case as parser does
+        expected_real_keywords = [k.lower() for k in real_config.domain.rag_component_keywords]
+        
+        # Check against a few known real keywords to be sure
+        assert "retriever" in real_parser.rag_keywords
+        assert "generator" in real_parser.rag_keywords
+        
+        # Full equality check
+        assert set(real_parser.rag_keywords) == set(expected_real_keywords), (
+            "Default parser should load keywords from src.config"
+        )
+
+
+@pytest.mark.unit
 class TestClaimParserLevel2Structure:
     """Level 2 Tests - Structure-Based Parsing (Indent/Brackets)."""
     
@@ -258,6 +285,7 @@ class TestClaimParserLevel2Structure:
         assert len(claims) >= 1, "Should parse at least 1 claim from mixed format"
 
 
+@pytest.mark.unit
 class TestClaimParserLevel3NLP:
     """Level 3 Tests - NLP Fallback (Mocked)."""
     
@@ -307,6 +335,7 @@ class TestClaimParserLevel3NLP:
         assert len(claims) >= 1, "Should parse sentences as claims"
 
 
+@pytest.mark.unit
 class TestClaimParserLevel4Minimal:
     """Level 4 Tests - Minimal Fallback (Ultimate Safety Net)."""
     
@@ -383,6 +412,7 @@ class TestClaimParserLevel4Minimal:
         )
 
 
+@pytest.mark.unit
 class TestClaimParserDataIntegrity:
     """Data Integrity Tests - ParsedClaim dataclass compatibility."""
     

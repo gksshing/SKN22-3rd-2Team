@@ -1,5 +1,5 @@
 """
-Short-Cut v3.0 - Source Package
+Short-Cut - Source Package
 ===================================
 RAG and sLLM domain-specialized prior art search system.
 

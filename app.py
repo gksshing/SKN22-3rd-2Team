@@ -1,5 +1,5 @@
 """
-Short-Cut v3.0 Main Application.
+Short-Cut Main Application.
 """
 import asyncio
 import os
@@ -11,7 +11,7 @@ load_dotenv()
 
 # Streamlit Config (Must be first)
 st.set_page_config(
-    page_title="Short-Cut v3.0",
+    page_title="Short-Cut",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -23,7 +23,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 # Imports after page config
 from src.session_manager import init_session_state, load_history, save_result_to_history
 from src.ui.styles import get_main_css
-from src.ui.components import render_header, render_sidebar, render_search_results
+from src.ui.components import render_header, render_sidebar, render_search_results, render_footer
 from src.analysis_logic import run_full_analysis
 
 # Initialize Session
@@ -39,20 +39,20 @@ render_header()
 # Cached Resource Loading
 @st.cache_resource
 def load_db_client():
-    """Load Pinecone + BM25 hybrid client."""
+    """Load Pinecone + BM25 hybrid client (optimized for speed)."""
     from src.vector_db import PineconeClient
     try:
-        client = PineconeClient()
-        db_stats = client.get_stats()
-        return client, db_stats
+        # skip_init_check=True reduces 1-2 seconds of network IO during startup
+        client = PineconeClient(skip_init_check=True) 
+        return client
     except Exception as e:
-        print(f"DB Init failed: {e}")
-        return None, {}
+        st.error(f"데이터베이스 연결 실패: {e}")
+        return None
 
-DB_CLIENT, DB_STATS = load_db_client()
+DB_CLIENT = load_db_client()
 
-# Sidebar
-use_hybrid, selected_ipc_codes = render_sidebar(OPENAI_API_KEY, DB_CLIENT, DB_STATS)
+# Sidebar (Stats are fetched lazily inside components if needed)
+use_hybrid, selected_ipc_codes = render_sidebar(OPENAI_API_KEY, DB_CLIENT)
 
 # Main Content - Input
 st.markdown("### 💡 아이디어 입력")
@@ -120,3 +120,6 @@ if analyze_button and can_analyze:
 # Results Display
 if st.session_state.current_result:
     render_search_results(st.session_state.current_result)
+
+# Footer
+render_footer()

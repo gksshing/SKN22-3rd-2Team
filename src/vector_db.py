@@ -39,6 +39,7 @@ except ImportError:
 try:
     from pinecone import Pinecone, ServerlessSpec
     PINECONE_AVAILABLE = True
+    from pinecone_text.sparse import BM25Encoder
 except ImportError:
     PINECONE_AVAILABLE = False
 
@@ -72,6 +73,7 @@ class SearchResult:
     rrf_score: float = 0.0
 
 
+
 @dataclass
 class InsertResult:
     """Result from inserting vectors."""
@@ -79,6 +81,83 @@ class InsertResult:
     inserted_count: int
     index_path: str
     error_message: Optional[str] = None
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def compute_rrf(
+    dense_results: List[SearchResult],
+    sparse_results: List[Tuple[str, float, Dict[str, Any]]],
+    dense_weight: float = 0.5,
+    sparse_weight: float = 0.5,
+    rrf_k: int = 60,
+    top_k: int = 10,
+) -> List[SearchResult]:
+    """
+    Compute Reciprocal Rank Fusion (RRF) scores.
+    
+    Args:
+        dense_results: List of SearchResult objects from dense search
+        sparse_results: List of (chunk_id, score, metadata) from sparse search
+        dense_weight: Weight for dense search contribution
+        sparse_weight: Weight for sparse search contribution
+        rrf_k: RRF constant
+        top_k: Number of results to return
+
+    Returns:
+        List of SearchResult objects sorted by RRF score
+    """
+    rrf_scores: Dict[str, float] = defaultdict(float)
+    chunk_data: Dict[str, SearchResult] = {}
+    
+    # Process dense results
+    for rank, result in enumerate(dense_results):
+        rrf_scores[result.chunk_id] += dense_weight / (rrf_k + rank + 1)
+        # Store original dense score
+        result.dense_score = result.score
+        chunk_data[result.chunk_id] = result
+    
+    # Process sparse results
+    for rank, (chunk_id, score, meta) in enumerate(sparse_results):
+        rrf_scores[chunk_id] += sparse_weight / (rrf_k + rank + 1)
+        
+        if chunk_id not in chunk_data:
+            # Create SearchResult from BM25 result if found only in sparse
+            chunk_data[chunk_id] = SearchResult(
+                chunk_id=chunk_id,
+                patent_id=meta.get("patent_id", ""),
+                score=0.0,
+                content=meta.get("content", ""),
+                content_type=meta.get("content_type", ""),
+                sparse_score=score,
+                metadata={
+                    "ipc_code": meta.get("ipc_code", ""),
+                    "importance_score": meta.get("importance_score", 0.0),
+                    "title": meta.get("title", ""),
+                    "abstract": meta.get("abstract", ""),
+                    "claims": meta.get("claims", ""),
+                    # Ensure metadata is preserved
+                    **{k: v for k, v in meta.items() if k not in ["content", "content_type", "patent_id", "title", "abstract", "claims"]}
+                },
+            )
+        else:
+            chunk_data[chunk_id].sparse_score = score
+            
+    # Sort by RRF score descending
+    sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    final_results = []
+    for chunk_id, rrf_score in sorted_ids[:top_k]:
+        if chunk_id in chunk_data:
+            result = chunk_data[chunk_id]
+            result.rrf_score = rrf_score
+            result.score = rrf_score  # Update main score to RRF
+            final_results.append(result)
+            
+    return final_results
+
 
 
 # =============================================================================
@@ -390,49 +469,14 @@ class FaissClient:
         sparse_raw = self.bm25_engine.search(query_text, top_k=top_k * 2)
         
         # RRF Fusion
-        rrf_scores: Dict[str, float] = defaultdict(float)
-        chunk_data: Dict[str, SearchResult] = {}
-        
-        # Process dense results
-        for rank, result in enumerate(dense_results):
-            rrf_scores[result.chunk_id] += dense_weight / (rrf_k + rank + 1)
-            result.dense_score = result.score
-            chunk_data[result.chunk_id] = result
-        
-        # Process sparse results
-        for rank, (chunk_id, score, meta) in enumerate(sparse_raw):
-            rrf_scores[chunk_id] += sparse_weight / (rrf_k + rank + 1)
-            
-            if chunk_id not in chunk_data:
-                # Create SearchResult from BM25 result
-                chunk_data[chunk_id] = SearchResult(
-                    chunk_id=chunk_id,
-                    patent_id=meta.get("patent_id", ""),
-                    score=0.0,
-                    content=meta.get("content", ""),
-                    content_type=meta.get("content_type", ""),
-                    sparse_score=score,
-                    metadata={
-                        "ipc_code": meta.get("ipc_code", ""),
-                        "importance_score": meta.get("importance_score", 0.0),
-                        "title": meta.get("title", ""),
-                        "abstract": meta.get("abstract", ""),
-                        "claims": meta.get("claims", ""),
-                    },
-                )
-            else:
-                chunk_data[chunk_id].sparse_score = score
-        
-        # Sort by RRF score and update results
-        sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        
-        final_results = []
-        for chunk_id, rrf_score in sorted_ids[:top_k]:
-            if chunk_id in chunk_data:
-                result = chunk_data[chunk_id]
-                result.rrf_score = rrf_score
-                result.score = rrf_score  # Use RRF score as primary score
-                final_results.append(result)
+        final_results = compute_rrf(
+            dense_results=dense_results,
+            sparse_results=sparse_raw,
+            dense_weight=dense_weight,
+            sparse_weight=sparse_weight,
+            rrf_k=rrf_k,
+            top_k=top_k
+        )
         
         logger.info(f"Hybrid search: {len(dense_results)} dense + {len(sparse_raw)} sparse -> {len(final_results)} fused")
         
@@ -566,6 +610,7 @@ class PineconeClient:
         self,
         pinecone_config: PineconeConfig = None,
         embedding_dim: int = None,
+        skip_init_check: bool = True,
     ):
         if not PINECONE_AVAILABLE:
             raise ImportError("pinecone is required. Install with: pip install pinecone>=3.0.0")
@@ -579,21 +624,27 @@ class PineconeClient:
             
         self.pc = Pinecone(api_key=self.config.api_key)
         
-        # Check/Create Index
-        self._ensure_index_exists()
-        
         self.index = self.pc.Index(self.config.index_name)
         
-        # Setup Local BM25
-        self.bm25_engine = BM25SearchEngine()
-        # We reuse FAISS metadata path for consistency or define a new one?
-        # Let's use a specific path to avoid conflict/overwrite of FAISS data if running side-by-side
-        self.metadata_path = INDEX_DIR / "pinecone_metadata.pkl"
-        self.bm25_path = INDEX_DIR / "pinecone_bm25.pkl"
-        
+        # Local metadata cache (Synchronized with FaissClient logic)
         self.metadata: Dict[str, Dict[str, Any]] = {}
-        self._loaded = False
+        self.metadata_path = self.config.metadata_path or INDEX_DIR / "pinecone_metadata.pkl"
         
+        # Setup BM25 Encoder (Serverless Hybrid)
+        # We need to load fitted parameters if available, otherwise start new
+        self.bm25_params_path = INDEX_DIR / "bm25_params.json"
+        
+        try:
+            if self.bm25_params_path.exists():
+                self.bm25_encoder = BM25Encoder().load(str(self.bm25_params_path))
+                logger.info(f"Loaded BM25 params from {self.bm25_params_path}")
+            else:
+                self.bm25_encoder = BM25Encoder.default()
+                logger.info("Initialized default BM25Encoder (will need fitting)")
+        except Exception as e:
+             logger.warning(f"Failed to load BM25 encoder: {e}. Using default.")
+             self.bm25_encoder = BM25Encoder.default()
+
         logger.info(f"Pinecone Client initialized (index={self.config.index_name})")
 
     def _ensure_index_exists(self):
@@ -636,69 +687,71 @@ class PineconeClient:
         batch_size = self.config.batch_size
         
         logger.info(f"Upserting {total} vectors to Pinecone (batch_size={batch_size})...")
+
+        # 1. Fit BM25 Encoder if needed (First time) - Ideally done before manual call, but here we can check
+        # NOTE: BM25Encoder needs full corpus stats. In a batch scenario, we might be just adding.
+        # Ideally, we fit on the *whole* corpus before. 
+        # Here we assume the encoder is already reasonably fitted or we fit on this batch (suboptimal but works for cold start).
         
-        # Prepare for BM25
-        # We can update self.metadata incrementally or rebuild. 
-        # Here we assume batch/initial load pattern.
+        # Collect all texts for sparse encoding
+        all_texts = [m.get("content", "") for m in metadata_list]
+        
+        # If default/empty, we MUST fit.
+        # A simple heuristic: check if doc_freq is empty
+        if len(self.bm25_encoder.doc_freq) == 0:
+             logger.info("Fitness check: Fitting BM25 encoder on new batch (Cold Start)...")
+             self.bm25_encoder.fit(all_texts)
+             # Save params immediately
+             self.bm25_encoder.dump(str(self.bm25_params_path))
+        
+        # Generate Sparse Vectors for ALL documents in batch
+        # (pinecone-text handles parallelization? or we loop)
+        sparse_vectors = self.bm25_encoder.encode_documents(all_texts)
         
         upsert_count = 0
-        
-        # Use tqdm for progress visibility
         from tqdm import tqdm
+        
         for i in tqdm(range(0, total, batch_size), desc="Upserting to Pinecone", unit="batch"):
             batch_vectors = embeddings[i : i + batch_size]
             batch_meta = metadata_list[i : i + batch_size]
+            batch_sparse = sparse_vectors[i : i + batch_size]
             
             vectors_to_upsert = []
-            for j, (vec, meta) in enumerate(zip(batch_vectors, batch_meta)):
-                # chunk_id should be unique. 
+            for j, (vec, meta, sparse) in enumerate(zip(batch_vectors, batch_meta, batch_sparse)):
                 chunk_id = meta.get("chunk_id", f"chk_{i+j}")
                 
-                # Update local metadata
-                self.metadata[chunk_id] = meta
-                
-                # Prepare Pinecone vector
-                # Flatten metadata for Pinecone (limitations on nested dicts?)
-                # Pinecone supports basic types. Ensure robust types.
-                
-                # Metadata size limit check (40KB per vector)
+                # Metadata Truncation Strategy
                 content_text = meta.get("content", "")
-                # Safe truncate to ~30KB to allow room for other fields
+                # Limit to 30KB text to be safe
                 if len(content_text.encode('utf-8')) > 30000:
-                    # Simple truncation by character may not match byte size perfectly but good enough approximation
-                    # 10000 chars is usually safe even with multi-byte chars
                     content_text = content_text[:10000]
 
                 flat_meta = {
                     "text": content_text,
-                    "title": (meta.get("title", "") or "")[:1000],  # Truncate title
+                    "title": (meta.get("title", "") or "")[:500],
                     "patent_id": meta.get("patent_id", ""),
                     "ipc_code": (meta.get("ipc_codes") or [""])[0] if isinstance(meta.get("ipc_codes"), list) else str(meta.get("ipc_codes", "")),
-                    # Add other fields as needed, keep it lightweight
+                    "abstract": (meta.get("abstract", "") or "")[:1000],
+                    "claims": (meta.get("claims", "") or "")[:2000],
+                    "importance_score": float(meta.get("importance_score", 0.0))
                 }
+                
+                # Store in local metadata cache as well
+                self.metadata[chunk_id] = meta
                 
                 vectors_to_upsert.append({
                     "id": chunk_id,
                     "values": vec.tolist(),
-                    "metadata": flat_meta
+                    "sparse_values": sparse, # Inject Sparse Vector
+                    "metadata": {k: v for k, v in flat_meta.items() if v} # Filter out empty values
                 })
             
-            # Upsert batch
             try:
                 self.index.upsert(vectors=vectors_to_upsert, namespace=self.config.namespace)
                 upsert_count += len(vectors_to_upsert)
             except Exception as e:
                 logger.error(f"Pinecone upsert failed at batch {i}: {e}")
-                # Continue or raise? Usually raise to ensure integrity
                 raise e
-        
-        logger.info(f"Upserted {upsert_count} vectors to Pinecone")
-        
-        # Build/Update BM25
-        # Note: If we are adding incrementally, rebuilding BM25 every time is slow.
-        # But assuming build_index_from_patents uses this once.
-        docs = list(self.metadata.values())
-        self.bm25_engine.build_index(docs, text_key="content", id_key="chunk_id")
         
         return upsert_count
 
@@ -766,8 +819,6 @@ class PineconeClient:
                 break
                 
         return results
-            
-        return results
 
     def hybrid_search(
         self,
@@ -781,86 +832,77 @@ class PineconeClient:
         normalize: bool = True,
     ) -> List[SearchResult]:
         """
-        Hybrid search (Pinecone Dense + Local BM25) with RRF and IPC Filtering.
+        Serverless Hybrid Search using Pinecone (Dense + Sparse).
+        IPC Filtering is done client-side for prefix matching support.
         """
-        # 1. Dense Search (Pinecone) with IPC Filtering
-        dense_results = self.search(
-            query_embedding, 
-            top_k=top_k * 2,
-            ipc_filters=ipc_filters
-        )
-        
-        # 2. Sparse Search (Local BM25) with local filtering
-        # Fetch more if filtering
-        sparse_fetch_k = top_k * 10 if ipc_filters else top_k * 2
-        sparse_raw = self.bm25_engine.search(query_text, top_k=sparse_fetch_k)
-        
-        # Filter sparse results locally
-        filtered_sparse = []
-        for item in sparse_raw:
-            # BM25 returns (chunk_id, score, meta)
-            chunk_id, score, meta = item
+        # 0. Preparation
+        if query_embedding.ndim > 1:
+            query_embedding = query_embedding[0]
             
-            # Check IPC Filter
+        # 1. Generate Query Vectors (Dense & Sparse)
+        # Apply weights directly to vectors for weighted sum hybrid scoring
+        weighted_dense = (query_embedding * dense_weight).tolist()
+        
+        # Sparse encoding
+        sparse_vec = self.bm25_encoder.encode_queries(query_text)
+        weighted_sparse = {
+            "indices": sparse_vec["indices"],
+            "values": [v * sparse_weight for v in sparse_vec["values"]]
+        }
+        
+        # 2. Query Pinecone
+        # Fetch more items to allow client-side filtering (Prefix match on IPC)
+        fetch_k = top_k * 5 if ipc_filters else top_k
+        
+        try:
+            # Prepare query args
+            query_args = {
+                "vector": weighted_dense,
+                "top_k": fetch_k,
+                "include_metadata": True,
+                "namespace": self.config.namespace
+            }
+            
+            # Only add sparse_vector if it has values (Pinecone requirement)
+            if weighted_sparse.get("indices") is not None and len(weighted_sparse["indices"]) > 0:
+                query_args["sparse_vector"] = weighted_sparse
+            
+            response = self.index.query(**query_args)
+        except Exception as e:
+            logger.error(f"Pinecone hybrid query failed: {e}")
+            return []
+            
+        # 3. Process Results (Mapping & Filtering)
+        results = []
+        for match in response['matches']:
+            meta = match['metadata'] if match.get('metadata') else {}
+            score = match['score']
+            
+            # Extract basic fields
+            chunk_id = match['id']
+            ipc_code = meta.get("ipc_code", "")
+            
+            # Client-side IPC Filtering (Prefix Match)
             if ipc_filters:
-                ipc_code = meta.get("ipc_code", "") or (meta.get("ipc_codes", [""]) or [""])[0]
+                # ipc_filters example: ['G06', 'H04']
                 if not any(ipc_code.startswith(f) for f in ipc_filters):
                     continue
             
-            filtered_sparse.append(item)
-            if len(filtered_sparse) >= top_k * 2:
-                break
-                
-        sparse_results = filtered_sparse
-        
-        # RRF Fusion
-        rrf_scores: Dict[str, float] = defaultdict(float)
-        chunk_data: Dict[str, SearchResult] = {}
-        
-        # Process dense results
-        for rank, result in enumerate(dense_results):
-            rrf_scores[result.chunk_id] += dense_weight / (rrf_k + rank + 1)
-            result.dense_score = result.score
-            chunk_data[result.chunk_id] = result
-        
-        # Process sparse results
-        for rank, (chunk_id, score, meta) in enumerate(sparse_results):
-            rrf_scores[chunk_id] += sparse_weight / (rrf_k + rank + 1)
+            results.append(SearchResult(
+                chunk_id=chunk_id,
+                patent_id=meta.get("patent_id", ""),
+                score=score,
+                content=meta.get("text", ""), # Content served from Pinecone metadata
+                content_type="text",
+                dense_score=score, # Pinecone hybrid score
+                metadata=meta
+            ))
             
-            if chunk_id not in chunk_data:
-                # Create SearchResult from BM25 result
-                chunk_data[chunk_id] = SearchResult(
-                    chunk_id=chunk_id,
-                    patent_id=meta.get("patent_id", ""),
-                    score=0.0,
-                    content=meta.get("content", ""),
-                    content_type=meta.get("content_type", ""),
-                    sparse_score=score,
-                    metadata={
-                        "ipc_code": meta.get("ipc_code", ""),
-                        "importance_score": meta.get("importance_score", 0.0),
-                        "title": meta.get("title", ""),
-                        "abstract": meta.get("abstract", ""),
-                        "claims": meta.get("claims", ""),
-                    },
-                )
-            else:
-                chunk_data[chunk_id].sparse_score = score
+            if len(results) >= top_k:
+                break
         
-        # Sort by RRF score
-        sorted_ids = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        
-        final_results = []
-        for chunk_id, rrf_score in sorted_ids[:top_k]:
-            if chunk_id in chunk_data:
-                result = chunk_data[chunk_id]
-                result.rrf_score = rrf_score
-                result.score = rrf_score
-                final_results.append(result)
-        
-        logger.info(f"Pinecone Hybrid(IPC={ipc_filters}): {len(dense_results)} dense + {len(sparse_results)} sparse -> {len(final_results)} fused")
-        
-        return final_results
+        logger.info(f"Pinecone Hybrid Search(IPC={ipc_filters}): Found {len(results)} matches")
+        return results
 
     async def async_search(self, *args, **kwargs):
         """Async wrapper."""
@@ -873,42 +915,57 @@ class PineconeClient:
         return await loop.run_in_executor(None, lambda: self.hybrid_search(*args, **kwargs))
 
     def save_local(self) -> None:
-        """Save local metadata and BM25 index."""
-        self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        """Save BM25 parameters and metadata cache."""
+        # Save BM25 Params
+        self.bm25_params_path.parent.mkdir(parents=True, exist_ok=True)
+        self.bm25_encoder.dump(str(self.bm25_params_path))
+        logger.info(f"Saved BM25 params to {self.bm25_params_path}")
         
+        # Save Metadata Cache
         with open(self.metadata_path, 'wb') as f:
-            pickle.dump(self.metadata, f)
-        logger.info(f"Saved Pinecone metadata cache to {self.metadata_path}")
-        
-        self.bm25_engine.save_local(self.bm25_path)
+            pickle.dump({"metadata": self.metadata}, f)
+        logger.info(f"Saved metadata cache to {self.metadata_path}")
 
     def load_local(self) -> bool:
-        """Load local metadata and BM25 index."""
-        if not self.metadata_path.exists():
-            return False
+        """Load BM25 parameters and metadata cache."""
+        success = True
+        
+        # 1. Load BM25
+        if self.bm25_params_path.exists():
+            try:
+                self.bm25_encoder = BM25Encoder().load(str(self.bm25_params_path))
+                logger.info(f"Loaded BM25 params from {self.bm25_params_path}")
+            except Exception as e:
+                logger.error(f"Failed to load BM25 params: {e}")
+                success = False
+        else:
+            success = False
             
-        try:
-            with open(self.metadata_path, 'rb') as f:
-                self.metadata = pickle.load(f)
-            logger.info(f"Loaded Pinecone metadata cache ({len(self.metadata)} items)")
-            
-            if self.bm25_path.exists():
-                self.bm25_engine.load_local(self.bm25_path)
-            
-            self._loaded = True
-            return True
-        except Exception as e:
-            logger.error(f"Failed to load Pinecone local cache: {e}")
-            return False
+        # 2. Load Metadata
+        if self.metadata_path.exists():
+            try:
+                with open(self.metadata_path, 'rb') as f:
+                    data = pickle.load(f)
+                    self.metadata = data.get("metadata", {})
+                logger.info(f"Loaded metadata cache from {self.metadata_path} ({len(self.metadata)} items)")
+            except Exception as e:
+                logger.error(f"Failed to load metadata cache: {e}")
+                success = False
+        
+        self._loaded = success
+        return success
 
     def get_stats(self) -> Dict[str, Any]:
         """Get index stats."""
         try:
             stats = self.index.describe_index_stats()
+            # Try to get doc_count from encoder if possible (avg_doc_len usually present)
+            bm25_status = "initialized" if hasattr(self.bm25_encoder, 'doc_freq') and len(self.bm25_encoder.doc_freq) > 0 else "empty"
+            
             return {
                 "type": "pinecone", 
                 "total_vectors": stats.get('total_vector_count', 0),
-                "bm25_docs": len(self.bm25_engine.corpus)
+                "bm25_status": bm25_status
             }
         except:
             return {"type": "pinecone", "error": "stats_failed"}

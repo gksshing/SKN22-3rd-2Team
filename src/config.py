@@ -198,9 +198,9 @@ class PineconeConfig:
     api_key: str = os.environ.get("PINECONE_API_KEY", "")
     
     # Index Settings
-    index_name: str = "patent-guard-v3"
+    index_name: str = "patent-guard-hybrid"
     dimension: int = 1536  # Must match embedding model
-    metric: str = "cosine"  # or "dotproduct"
+    metric: str = "dotproduct"  # Required for hybrid search (sparse values)
     
     # Cloud Settings (Serverless)
     cloud: str = "aws"
@@ -211,6 +211,9 @@ class PineconeConfig:
     
     # Namespace
     namespace: str = "default"
+    
+    # Metadata path
+    metadata_path: Optional[Path] = None
 
 
 # =============================================================================

@@ -1,5 +1,5 @@
 """
-Short-Cut v3.0 - Main Pipeline Orchestrator (Antigravity Edition)
+Short-Cut - Main Pipeline Orchestrator (Antigravity Edition)
 =====================================================================
 Orchestrates the complete patent data pipeline with FAISS indexing.
 
@@ -396,7 +396,7 @@ async def run_full_pipeline(
     skip_stages = skip_stages or []
     
     print("\n" + "=" * 70)
-    print("⚡ 쇼특허 (Short-Cut) v3.0 - Full Pipeline (Antigravity Mode)")
+    print("⚡ 쇼특허 (Short-Cut) - Full Pipeline (Antigravity Edition)")
     print("=" * 70)
     
     # Update config from environment

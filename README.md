@@ -2,7 +2,7 @@
 
 **AI 기반 특허 선행 기술 조사 시스템**
 
-사용자의 아이디어를 입력하면 기존 특허와 비교하여 **유사도**, **침해 리스크**, **회피 전략**을 분석해주는 Self-RAG 기반 특허 분석 도구입니다.
+사용자의 아이디어를 입력하면 기존 특허와 비교하여 **유사도**, **침해 리스크**, **회피 전략**을 분석해주는 RAG 기반 특허 분석 도구입니다.
 
 > **Team 뀨💕** | [기술 제안서](report/v3_technical_proposal.md) | [기술 리포트](report/v3_technical_report.md)
 
@@ -12,15 +12,14 @@
 
 | 기능 | 설명 |
 |------|------|
-| **Multi-Query RAG** | 3가지 관점(기술/청구항/문제해결)으로 쿼리를 확장하여 검색 커버리지 극대화 |
-| **IPC Filtering** | 관심 기술 분야(IPC) 필터링으로 검색 정확도 향상 (User-friendly 라벨 제공) |
-| **Hybrid Search** | Pinecone (Dense) + Local BM25 (Sparse) + RRF 융합 검색 |
-| **Reranker** | Cross-Encoder(ms-marco)를 활용한 검색 결과 정밀 재정렬 |
-| **Claim-Level Analysis** | '모든 구성요소 법칙'을 적용하여 각 특허의 위험 청구항 정밀 분석 |
-| **Feedback Loop** | 사용자 피드백(👍/👎) 수집 및 Reranker 학습 데이터 구축 |
-| **Serverless DB** | Pinecone 벡터 DB를 활용한 확장성 있는 데이터 관리 |
-| **LLM Streaming** | 실시간 분석 결과 출력 (0초 체감 대기시간) |
-| **Visualization** | 특허 지형도 (Jitter/Connection Line) 및 전략 가이드 제공 |
+| **Multi-Query RAG** | 기술적/법적 관점으로 쿼리를 자동 확장하여 검색 누락 최소화 |
+| **Hybrid Search** | Pinecone (Dense) + Local BM25 (Sparse) + RRF 융합 검색으로 정확도 극대화 |
+| **Reranker** | Cross-Encoder 모델을 활용하여 검색 결과의 관련성 정밀 재정렬 |
+| **Claim-Level Analysis** | '모든 구성요소 법칙(All Elements Rule)'을 적용한 특허 침해 리스크 정밀 진단 |
+| **IPC Filtering** | 일반 사용자도 이해하기 쉬운 기술 태그(라벨) 기반 필터링 제공 |
+| **Feedback Loop** | 분석 결과에 대한 사용자 피드백(👍/👎) 수집 및 검색 품질 개선 엔진 |
+| **Streaming Output** | 분석 과정을 실시간으로 출력하여 사용자 대기 시간 체감 0초 달성 |
+| **Visualization** | 특허 간 관계를 타임라인 및 토픽 맵으로 시각화하여 직관적 파악 가능 |
 
 ---
 
@@ -30,33 +29,29 @@
 
 ```bash
 # 가상환경 생성 및 활성화
-conda create -n patent-guard python=3.11 -y
-conda activate patent-guard
+conda create -n shortcut python=3.11 -y
+conda activate shortcut
 
-# 의존성 설치 (sentence-transformers 포함)
+# 의존성 설치
 pip install -r requirements.txt
 
-# NLP 모델 다운로드 (선택)
+# NLP 모델 다운로드
 python -m spacy download en_core_web_sm
 ```
 
 ### 2. 환경 변수 설정
 
-```bash
-cp .env.example .env
-```
-
-`.env` 파일 편집:
+`.env` 파일을 프로젝트 루트에 생성하고 아래 항목을 입력합니다:
 ```env
 OPENAI_API_KEY=your-openai-api-key
 PINECONE_API_KEY=your-pinecone-api-key
-GCP_PROJECT_ID=your-gcp-project-id  # BigQuery 사용 시
+GCP_PROJECT_ID=your-gcp-project-id  # BigQuery 연동 시 필요
 ```
 
-### 3. 파이프라인 실행 (최초 1회)
+### 3. 데이터 인덱싱 (최초 1회)
 
 ```bash
-# 데이터 전처리 → 임베딩 → Pinecone 업로드
+# 데이터 전처리 및 Pinecone/BM25 인덱스 생성
 python src/pipeline.py --stage 5
 ```
 
@@ -65,7 +60,23 @@ python src/pipeline.py --stage 5
 ```bash
 streamlit run app.py
 ```
-*최초 실행 시 Reranker 모델 다운로드로 인해 약 10~20초 소요될 수 있습니다.*
+
+---
+
+## 📊 분석 아키텍처
+
+```mermaid
+flowchart TD
+    A[사용자 아이디어 입력] --> B[Multi-Query 생성]
+    B --> C{하이브리드 검색}
+    C -->|Dense| D[Pinecone Search]
+    C -->|Sparse| E[Local BM25 Search]
+    D & E --> F[RRF Fusion & Filtering]
+    F --> G[Cross-Encoder Reranking]
+    G --> H[Claim-Level Analysis]
+    H --> I[실시간 스트리밍 분석 결과]
+    I --> J[사용자 피드백 수집]
+```
 
 ---
 
@@ -73,99 +84,31 @@ streamlit run app.py
 
 ```
 SKN22-3rd-2Team/
-├── app.py                   # 🎯 Streamlit 웹 앱 (메인)
+├── app.py                   # Streamlit 메인 애플리케이션
 ├── src/
-│   ├── analysis_logic.py    # 분석 오케스트레이션 (검색+분석+스트리밍)
-│   ├── patent_agent.py      # Self-RAG 에이전트 (Multi-Query + Claim Analysis)
-│   ├── vector_db.py         # Pinecone + BM25 하이브리드 검색 (IPC 필터)
-│   ├── reranker.py          # Cross-Encoder Reranker
-│   ├── feedback_logger.py   # 피드백 수집 (JSONL)
+│   ├── analysis_logic.py    # 분석 프로세스 오케스트레이션
+│   ├── patent_agent.py      # AI 에이전트 핵심 로직 (RAG, Claim Analysis)
+│   ├── vector_db.py         # 하이브리드 검색 엔진 (Pinecone + BM25)
+│   ├── reranker.py          # 정밀 재정렬 모델
+│   ├── feedback_logger.py   # 사용자 피드백 로그 저장
 │   ├── history_manager.py   # 분석 이력 관리 (SQLite)
-│   ├── session_manager.py   # 세션 관리
-│   ├── ui/                  # UI 컴포넌트
-│   │   ├── components.py    # 결과 렌더링, 사이드바
-│   │   ├── visualization.py # 특허 지형도 시각화
-│   │   └── styles.py        # CSS 스타일
-│   ├── preprocessor.py      # 4-Level 청구항 파서
-│   ├── embedder.py          # OpenAI 임베딩
-│   └── pipeline.py          # 파이프라인 오케스트레이터
-├── logs/                    # 피드백 로그 및 시스템 로그
-├── tests/                   # 🧪 DeepEval 및 단위 테스트
-├── report/                  # 📄 기술 문서
-├── requirements.txt
-└── README.md
+│   ├── ui/                  # UI 컴포넌트 및 스타일
+│   └── preprocessor.py      # 특허 문서 파서 및 전처리기
+├── logs/                    # 시스템 및 피드백 로그
+├── tests/                   # 품질 검증 테스트 (DeepEval)
+└── report/                  # 기술 문서 및 분석 보고서
 ```
 
 ---
 
-## 🔧 설정 옵션
+## 🔧 주요 설정 (src/config.py)
 
-| 변수 | 기본값 | 설명 |
-|------|--------|------|
-| `OPENAI_API_KEY` | - | OpenAI API 키 (필수) |
-| `PINECONE_API_KEY` | - | Pinecone API 키 (필수) |
-| `EMBEDDING_MODEL` | `text-embedding-3-small` | 임베딩 모델 |
-| `GRADING_MODEL` | `gpt-4o-mini` | 관련성 평가 모델 |
-| `ANALYSIS_MODEL` | `gpt-4o` | 최종 분석 모델 |
-| `GRADING_THRESHOLD` | `0.6` | 재검색 기준 점수 |
-| `TOP_K_RESULTS` | `5` | 검색 결과 개수 |
-
----
-
-## 📊 분석 파이프라인 (Advanced)
-
-```
-[사용자 아이디어] & [IPC 필터]
-        ↓
-[Multi-Query Gen] 3가지 관점 쿼리 생성
-        ↓
-[Parallel Search] (Pinecone Dense + BM25 Sparse) x 3
-        ↓
-[IPC Filtering] 기술 분야 필터링
-        ↓
-[RRF Fusion] 검색 결과 통합 및 중복 제거
-        ↓
-[Reranker] Cross-Encoder 정밀 재정렬 (Top-5 선정)
-        ↓
-[Claim Analysis] 'All Elements Rule' 기반 청구항 정밀 분석
-        ↓
-[Streaming Output] 실시간 리포트 생성
-```
-
----
-
-## 🧪 테스트 및 QA
-
-### 테스트 실행
-
-```bash
-# 모든 테스트 실행
-pytest tests/ -v --asyncio-mode=auto
-
-# RAG 품질 평가 (DeepEval)
-pytest tests/test_evaluation.py -v
-```
-
-### 🏆 QA 현황 (100% Pass)
-
-| 카테고리 | 테스트 항목 | 상태 | 비고 |
-|---|---|---|---|
-| **RAG Quality** | Faithfulness, Answer Relevancy | ✅ PASS | DeepEval 검증 |
-| **Search Engine** | Hybrid RRF Logic | ✅ PASS | |
-| **Parser** | 4-Level Claim Parsing | ✅ PASS | |
-| **Data** | Integrity Check | ✅ PASS | |
-
-> 상세 내용은 [03_test_report/README.md](03_test_report/README.md) 참조
-
----
-
-## 💰 비용 정보
-
-| 작업 | 예상 비용 |
-|------|----------|
-| BigQuery 쿼리 (10K 특허) | ~$2 (1회) |
-| OpenAI 분석 (1건) | ~$0.01-0.03 |
-| Pinecone 저장 | Serverless (사용량 기반) |
+| 설정 항목 | 설명 |
+|------|------|
+| `PINECONE_INDEX_NAME` | Pinecone 서버리스 인덱스 이름 |
+| `ANALYSIS_MODEL` | 분석에 사용하는 LLM 모델 (Default: gpt-4o) |
+| `TOP_K_RESULTS` | 최종 분석에 반영할 특허 개수 |
+| `HYBRID_ALPHA` | Dense/Sparse 검색 가중치 비율 |
 
 ---
 
@@ -176,5 +119,4 @@ MIT License
 ---
 
 ## 👥 Team 뀨💕
-
-**쇼특허** **(Short-Cut)** - AI 기반 특허 선행 기술 조사 시스템
+**쇼특허 (Short-Cut)** - "특허 분석의 지름길을 제시합니다."

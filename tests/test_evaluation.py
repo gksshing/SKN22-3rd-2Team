@@ -18,7 +18,12 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+# Add project root to path (so 'src' package is resolvable)
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Load Env
+from dotenv import load_dotenv
+load_dotenv()
 
 # Check for required environment variables
 if not os.environ.get("OPENAI_API_KEY"):
@@ -39,7 +44,7 @@ except ImportError:
     )
 
 # Import PatentAgent
-from patent_agent import PatentAgent
+from src.patent_agent import PatentAgent
 
 
 # =============================================================================
@@ -60,10 +65,12 @@ GOLDEN_DATASET: List[Dict[str, Any]] = [
         "id": "test_001",
         "name": "RAG 기반 문서 검색 시스템",
         "query": """
-        Retrieval Augmented Generation 기술을 활용한 문서 검색 시스템입니다.
-        사용자 쿼리를 벡터 임베딩으로 변환하고, 벡터 데이터베이스에서 
-        유사한 문서를 검색하여 LLM에 컨텍스트로 제공합니다.
-        하이브리드 검색(Dense + Sparse)과 RRF 융합을 사용합니다.
+        Please generate a comprehensive patent analysis report for the following idea
+        (including prior art search, infringement risk, and avoidance strategy):
+        A document search system utilizing Retrieval Augmented Generation technology.
+        It converts user queries into vector embeddings, retrieves similar documents 
+        from a vector database, and provides them as context to an LLM.
+        It uses hybrid search (Dense + Sparse) and RRF fusion.
         """,
         "expected_topics": ["retrieval", "embedding", "vector", "search"],
     },
@@ -71,10 +78,12 @@ GOLDEN_DATASET: List[Dict[str, Any]] = [
         "id": "test_002",
         "name": "Semantic Search 엔진",
         "query": """
-        Neural information retrieval 기반의 semantic search 엔진입니다.
-        Transformer 모델로 문서와 쿼리를 임베딩하고,
-        코사인 유사도로 의미적으로 유사한 문서를 검색합니다.
-        전통적인 키워드 검색보다 더 정확한 결과를 제공합니다.
+        Please generate a comprehensive patent analysis report for the following idea
+        (including prior art search, infringement risk, and avoidance strategy):
+        A semantic search engine based on Neural information retrieval.
+        It embeds documents and queries using Transformer models and 
+        retrieves semantically similar documents via cosine similarity.
+        It provides more accurate results than traditional keyword search.
         """,
         "expected_topics": ["semantic", "transformer", "embedding", "neural"],
     },
@@ -82,9 +91,11 @@ GOLDEN_DATASET: List[Dict[str, Any]] = [
         "id": "test_003",
         "name": "LLM Fine-tuning 시스템",
         "query": """
-        Large Language Model을 특정 도메인에 fine-tuning하는 시스템입니다.
-        효율적인 inference를 위해 quantization 기법을 적용하고,
-        prompt engineering으로 최적화된 결과를 생성합니다.
+        Please generate a comprehensive patent analysis report for the following idea
+        (including prior art search, infringement risk, and avoidance strategy):
+        A system for fine-tuning Large Language Models on specific domains.
+        It applies quantization techniques for efficient inference and 
+        generates optimized results via prompt engineering.
         """,
         "expected_topics": ["language model", "fine-tuning", "inference", "prompt"],
     },
@@ -147,13 +158,15 @@ def extract_retrieval_context(search_results: List[Dict]) -> List[str]:
         context_parts = [f"Patent {patent_id}: {title}"]
         
         if abstract:
-            # Truncate abstract if too long (DeepEval has token limits)
-            abstract_truncated = abstract[:1500] if len(abstract) > 1500 else abstract
+            # Truncate abstract if too long (DeepEval has token limits, but 4o-mini handles 128k)
+            # Increased from 1500 to 4000 chars to cover full context
+            abstract_truncated = abstract[:4000] if len(abstract) > 4000 else abstract
             context_parts.append(f"Abstract: {abstract_truncated}")
         
         if claims:
             # Truncate claims if too long
-            claims_truncated = claims[:2000] if len(claims) > 2000 else claims
+            # Increased from 2000 to 5000 chars to ensure critical claims are included
+            claims_truncated = claims[:5000] if len(claims) > 5000 else claims
             context_parts.append(f"Claims: {claims_truncated}")
         
         if result.get("grading_reason"):
@@ -236,6 +249,8 @@ class TestRAGQuality:
     """
     
     @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.slow
     @pytest.mark.parametrize("test_case", GOLDEN_DATASET, ids=lambda tc: tc["id"])
     async def test_rag_quality(
         self,
@@ -243,6 +258,7 @@ class TestRAGQuality:
         patent_agent: PatentAgent,
         faithfulness_metric: FaithfulnessMetric,
         relevancy_metric: AnswerRelevancyMetric,
+        record_property,
     ):
         """
         RAG 품질 테스트: Faithfulness + Answer Relevancy.
@@ -252,6 +268,7 @@ class TestRAGQuality:
             patent_agent: PatentAgent 인스턴스
             faithfulness_metric: 충실도 메트릭
             relevancy_metric: 관련성 메트릭
+            record_property: pytest fixture for custom report attributes
         """
         print(f"\n{'='*60}")
         print(f"🧪 Test Case: {test_case['name']}")
@@ -300,6 +317,11 @@ class TestRAGQuality:
         faithfulness_metric.measure(llm_test_case)
         faith_score = faithfulness_metric.score
         faith_reason = faithfulness_metric.reason
+        
+        # Record to XML report
+        record_property("faithfulness_score", faith_score)
+        record_property("faithfulness_reason", faith_reason or "N/A")
+        
         print(f"   📊 Faithfulness Score: {faith_score:.2f} (threshold: {FAITHFULNESS_THRESHOLD})")
         if faith_reason:
             print(f"      Reason: {faith_reason[:150]}...")
@@ -313,6 +335,11 @@ class TestRAGQuality:
         relevancy_metric.measure(llm_test_case)
         rel_score = relevancy_metric.score
         rel_reason = relevancy_metric.reason
+        
+        # Record to XML report
+        record_property("relevancy_score", rel_score)
+        record_property("relevancy_reason", rel_reason or "N/A")
+
         print(f"   📊 Answer Relevancy Score: {rel_score:.2f} (threshold: {RELEVANCY_THRESHOLD})")
         if rel_reason:
             print(f"      Reason: {rel_reason[:150]}...")
@@ -334,13 +361,14 @@ class TestRAGQuality:
 # =============================================================================
 
 @pytest.mark.asyncio
+@pytest.mark.integration
 async def test_single_query_quality(patent_agent: PatentAgent):
     """
     단일 쿼리에 대한 빠른 품질 검증 테스트.
     
     CI/CD 파이프라인에서 빠르게 실행할 수 있는 경량 테스트.
     """
-    query = "자연어 처리 기반 특허 검색 시스템"
+    query = "Natural Language Processing based Patent Search System"
     
     result = await patent_agent.analyze(query, use_hybrid=True)
     

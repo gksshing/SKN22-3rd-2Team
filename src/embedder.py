@@ -1,5 +1,5 @@
 """
-Short-Cut v3.0 - OpenAI API Embedder (Antigravity Edition)
+Short-Cut - OpenAI API Embedder (Antigravity Edition)
 ==============================================================
 Lightweight embedding generation using OpenAI text-embedding-3-small.
 
@@ -266,7 +266,7 @@ async def main():
     )
     
     print("\n" + "=" * 70)
-    print("⚡ 쇼특허 (Short-Cut) v3.0 - OpenAI Embedder Test")
+    print("⚡ 쇼특허 (Short-Cut) - OpenAI Embedder Test")
     print(f"   Model: {config.embedding.model_id}")
     print(f"   Dimension: {config.embedding.embedding_dim}")
     print("=" * 70)
