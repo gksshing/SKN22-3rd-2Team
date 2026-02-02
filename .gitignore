@@ -54,6 +54,7 @@ env/
 # =============================================================================
 data/raw/*.json
 data/embeddings/*.npz
+*.pdf
 *.bin
 *.pt
 *.safetensors
